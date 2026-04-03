@@ -1,0 +1,933 @@
+{
+    "Entities": [
+        {
+            "Id": 1,
+            "Text": "tags",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.5971075296401978,
+            "BeginOffset": 3,
+            "EndOffset": 7,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "NEGATION",
+                    "Score": 0.5752319693565369
+                },
+                {
+                    "Name": "SIGN",
+                    "Score": 0.47435709834098816
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Tag (morphologic abnormality)",
+                    "Code": "80801001",
+                    "Score": 0.01057479903101921
+                },
+                {
+                    "Description": "Skin tag (disorder)",
+                    "Code": "201091002",
+                    "Score": 0.009834117256104946
+                },
+                {
+                    "Description": "Sentinel tag (disorder)",
+                    "Code": "20570000",
+                    "Score": 0.004634352866560221
+                },
+                {
+                    "Description": "Multiple skin tags (disorder)",
+                    "Code": "403857009",
+                    "Score": 0.00412222184240818
+                },
+                {
+                    "Description": "Hymenal tag (disorder)",
+                    "Code": "109868003",
+                    "Score": 0.0038844472728669643
+                }
+            ]
+        },
+        {
+            "Id": 4,
+            "Text": "haemorrhoids",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.6603351831436157,
+            "BeginOffset": 28,
+            "EndOffset": 40,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "DIAGNOSIS",
+                    "Score": 0.6248409748077393
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Hemorrhoids (disorder)",
+                    "Code": "70153002",
+                    "Score": 0.07065271586179733
+                },
+                {
+                    "Description": "External hemorrhoids (disorder)",
+                    "Code": "23913003",
+                    "Score": 0.013036038726568222
+                },
+                {
+                    "Description": "Phenol injection of hemorrhoid (procedure)",
+                    "Code": "307589007",
+                    "Score": 0.012534776702523232
+                },
+                {
+                    "Description": "Hemorrhoid preparation (product)",
+                    "Code": "346641004",
+                    "Score": 0.011715094558894634
+                },
+                {
+                    "Description": "Bleeding hemorrhoids (disorder)",
+                    "Code": "51551000",
+                    "Score": 0.011050586588680744
+                }
+            ]
+        },
+        {
+            "Id": 6,
+            "Text": "Never deny, the call to stool",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 71,
+            "EndOffset": 100,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Recommendation to (procedure)",
+                    "Code": "420227002",
+                    "Score": 0.03491172194480896
+                },
+                {
+                    "Description": "Bowel action (observable entity)",
+                    "Code": "39211005",
+                    "Score": 0.02457570470869541
+                },
+                {
+                    "Description": "Recommendation - action (qualifier value)",
+                    "Code": "424900004",
+                    "Score": 0.02234627678990364
+                },
+                {
+                    "Description": "General observation (regime/therapy)",
+                    "Code": "225414002",
+                    "Score": 0.019164007157087326
+                },
+                {
+                    "Description": "Referral by gastroenterologist (procedure)",
+                    "Code": "305968008",
+                    "Score": 0.01712128520011902
+                }
+            ]
+        },
+        {
+            "Id": 7,
+            "Text": "5 portions of fresh fruit and vegetables every day",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 101,
+            "EndOffset": 151,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Number of portions of fruit and vegetables daily (observable entity)",
+                    "Code": "401070008",
+                    "Score": 0.0922917053103447
+                },
+                {
+                    "Description": "Fruit exchange list (finding)",
+                    "Code": "46522005",
+                    "Score": 0.031926460564136505
+                },
+                {
+                    "Description": "Dietary finding (finding)",
+                    "Code": "41829006",
+                    "Score": 0.026293165981769562
+                },
+                {
+                    "Description": "Fresh fruit (substance)",
+                    "Code": "227416001",
+                    "Score": 0.025319481268525124
+                },
+                {
+                    "Description": "Feces quantity finding (finding)",
+                    "Code": "365677005",
+                    "Score": 0.024131763726472855
+                }
+            ]
+        },
+        {
+            "Id": 8,
+            "Text": "3 litres of water",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.5971075296401978,
+            "BeginOffset": 152,
+            "EndOffset": 169,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Water (substance)",
+                    "Code": "11713004",
+                    "Score": 0.005809418857097626
+                },
+                {
+                    "Description": "Quantity of defecation (observable entity)",
+                    "Code": "364173001",
+                    "Score": 0.005802372470498085
+                },
+                {
+                    "Description": "Liter/centimeter of water (qualifier value)",
+                    "Code": "259065007",
+                    "Score": 0.005761235021054745
+                },
+                {
+                    "Description": "Fluid restriction (procedure)",
+                    "Code": "25389001",
+                    "Score": 0.005633889231830835
+                },
+                {
+                    "Description": "Fluid intake (observable entity)",
+                    "Code": "251992000",
+                    "Score": 0.0048798685893416405
+                }
+            ]
+        },
+        {
+            "Id": 9,
+            "Text": "Do not strain",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.7172441482543945,
+            "BeginOffset": 170,
+            "EndOffset": 183,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Does not acculturate (finding)",
+                    "Code": "714852007",
+                    "Score": 0.004839431028813124
+                },
+                {
+                    "Description": "Does not (qualifier value)",
+                    "Code": "717896003",
+                    "Score": 0.003379707457497716
+                },
+                {
+                    "Description": "Does not do washing-up (finding)",
+                    "Code": "286089009",
+                    "Score": 0.0032748824451118708
+                },
+                {
+                    "Description": "No dehydration (situation)",
+                    "Code": "860981000",
+                    "Score": 0.0028686311561614275
+                },
+                {
+                    "Description": "Does not defecate (finding)",
+                    "Code": "300377009",
+                    "Score": 0.0027836766093969345
+                }
+            ]
+        },
+        {
+            "Id": 10,
+            "Text": "Avoid constipation",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.821601390838623,
+            "BeginOffset": 184,
+            "EndOffset": 202,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Not constipated (finding)",
+                    "Code": "162081000",
+                    "Score": 0.11679508537054062
+                },
+                {
+                    "Description": "Prevention of constipation (procedure)",
+                    "Code": "713115004",
+                    "Score": 0.11574933677911758
+                },
+                {
+                    "Description": "Constipation (finding)",
+                    "Code": "14760008",
+                    "Score": 0.08211381733417511
+                },
+                {
+                    "Description": "Constipation - functional (disorder)",
+                    "Code": "197118003",
+                    "Score": 0.0393044576048851
+                },
+                {
+                    "Description": "Constipation care (regime/therapy)",
+                    "Code": "389082000",
+                    "Score": 0.037615541368722916
+                }
+            ]
+        },
+        {
+            "Id": 12,
+            "Text": "constipation",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.90631103515625,
+            "BeginOffset": 190,
+            "EndOffset": 202,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "HYPOTHETICAL",
+                    "Score": 0.9405226111412048
+                },
+                {
+                    "Name": "SYMPTOM",
+                    "Score": 0.779019296169281
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Constipation (finding)",
+                    "Code": "14760008",
+                    "Score": 0.4919049143791199
+                },
+                {
+                    "Description": "Constipation - functional (disorder)",
+                    "Code": "197118003",
+                    "Score": 0.061114247888326645
+                },
+                {
+                    "Description": "Obstipation (disorder)",
+                    "Code": "111360009",
+                    "Score": 0.054694607853889465
+                },
+                {
+                    "Description": "Not constipated (finding)",
+                    "Code": "162081000",
+                    "Score": 0.03943025320768356
+                },
+                {
+                    "Description": "At risk for constipation (finding)",
+                    "Code": "129691005",
+                    "Score": 0.031186215579509735
+                }
+            ]
+        },
+        {
+            "Id": 11,
+            "Text": "Do not spend more than 3 minutes sitting on the toilet",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.6603351831436157,
+            "BeginOffset": 203,
+            "EndOffset": 257,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Does not sit on toilet (finding)",
+                    "Code": "284941001",
+                    "Score": 0.08805271983146667
+                },
+                {
+                    "Description": "Does sit on toilet (finding)",
+                    "Code": "284940000",
+                    "Score": 0.06844355165958405
+                },
+                {
+                    "Description": "Difficulty sitting on toilet (finding)",
+                    "Code": "284942008",
+                    "Score": 0.06099069118499756
+                },
+                {
+                    "Description": "Does not perform toileting activities (finding)",
+                    "Code": "284903008",
+                    "Score": 0.05964459106326103
+                },
+                {
+                    "Description": "Does use toilet (finding)",
+                    "Code": "284909007",
+                    "Score": 0.05049242079257965
+                }
+            ]
+        },
+        {
+            "Id": 14,
+            "Text": "Rectum Tissue",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 433,
+            "EndOffset": 446,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Rectal tissue sample (specimen)",
+                    "Code": "309200000",
+                    "Score": 0.26266005635261536
+                },
+                {
+                    "Description": "Rectum part (body structure)",
+                    "Code": "372237002",
+                    "Score": 0.18791788816452026
+                },
+                {
+                    "Description": "Rectum wall structure (body structure)",
+                    "Code": "511000202101",
+                    "Score": 0.16660600900650024
+                },
+                {
+                    "Description": "Structure of supporting tissue of rectum (body structure)",
+                    "Code": "3370002",
+                    "Score": 0.15242904424667358
+                },
+                {
+                    "Description": "Rectum structure (body structure)",
+                    "Code": "34402009",
+                    "Score": 0.14374789595603943
+                }
+            ]
+        },
+        {
+            "Id": 18,
+            "Text": "Rectum Tissue HISTOLOGY",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TEST_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 433,
+            "EndOffset": 456,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Histologic test (procedure)",
+                    "Code": "714797009",
+                    "Score": 0.20872150361537933
+                },
+                {
+                    "Description": "Histology laboratory test (navigational concept)",
+                    "Code": "395171002",
+                    "Score": 0.09342212975025177
+                },
+                {
+                    "Description": "Sampling of tissue specimen (procedure)",
+                    "Code": "433465004",
+                    "Score": 0.08180010318756104
+                },
+                {
+                    "Description": "Cytologic test (procedure)",
+                    "Code": "116147009",
+                    "Score": 0.06774541735649109
+                },
+                {
+                    "Description": "Histopathology test (procedure)",
+                    "Code": "252416005",
+                    "Score": 0.05743357166647911
+                }
+            ]
+        },
+        {
+            "Id": 15,
+            "Text": "Rectum Tissue HISTOLOGY, TISSUE",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TEST_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 433,
+            "EndOffset": 464,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Histologic test (procedure)",
+                    "Code": "714797009",
+                    "Score": 0.20288024842739105
+                },
+                {
+                    "Description": "Sampling of tissue specimen (procedure)",
+                    "Code": "433465004",
+                    "Score": 0.10124561935663223
+                },
+                {
+                    "Description": "Histology laboratory test (navigational concept)",
+                    "Code": "395171002",
+                    "Score": 0.0940546914935112
+                },
+                {
+                    "Description": "Cytologic test (procedure)",
+                    "Code": "116147009",
+                    "Score": 0.07578974962234497
+                },
+                {
+                    "Description": "Rectal tissue sample (specimen)",
+                    "Code": "309200000",
+                    "Score": 0.0667182058095932
+                }
+            ]
+        },
+        {
+            "Id": 16,
+            "Text": "TISSUE",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.6603351831436157,
+            "BeginOffset": 458,
+            "EndOffset": 464,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Body tissue structure (body structure)",
+                    "Code": "85756007",
+                    "Score": 0.4407964050769806
+                },
+                {
+                    "Description": "Skin structure tissue (body structure)",
+                    "Code": "314818000",
+                    "Score": 0.2855626046657562
+                },
+                {
+                    "Description": "Tissue specimen (specimen)",
+                    "Code": "119376003",
+                    "Score": 0.25172314047813416
+                },
+                {
+                    "Description": "Rectal tissue sample (specimen)",
+                    "Code": "309200000",
+                    "Score": 0.21353664994239807
+                },
+                {
+                    "Description": "Tumor tissue sample (specimen)",
+                    "Code": "258435002",
+                    "Score": 0.20198288559913635
+                }
+            ]
+        },
+        {
+            "Id": 19,
+            "Text": "Rectal",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.8435389995574951,
+            "BeginOffset": 534,
+            "EndOffset": 540,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Rectum structure (body structure)",
+                    "Code": "34402009",
+                    "Score": 0.7109850645065308
+                },
+                {
+                    "Description": "Rectum wall structure (body structure)",
+                    "Code": "511000202101",
+                    "Score": 0.19528216123580933
+                },
+                {
+                    "Description": "Rectal (intended site)",
+                    "Code": "738986003",
+                    "Score": 0.11988348513841629
+                },
+                {
+                    "Description": "Rectal biopsy sample (specimen)",
+                    "Code": "309262006",
+                    "Score": 0.10637252777814865
+                },
+                {
+                    "Description": "Rectum part (body structure)",
+                    "Code": "372237002",
+                    "Score": 0.09944219887256622
+                }
+            ]
+        },
+        {
+            "Id": 20,
+            "Text": "Rectal Biopsy",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "PROCEDURE_NAME",
+            "Score": 0.5971075296401978,
+            "BeginOffset": 534,
+            "EndOffset": 547,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Biopsy of rectum (procedure)",
+                    "Code": "54686006",
+                    "Score": 0.7626091837882996
+                },
+                {
+                    "Description": "Surgical biopsy of rectum (procedure)",
+                    "Code": "274352006",
+                    "Score": 0.48017585277557373
+                },
+                {
+                    "Description": "Endoscopic biopsy of rectum (procedure)",
+                    "Code": "274324002",
+                    "Score": 0.41697001457214355
+                },
+                {
+                    "Description": "Biopsy of anus (procedure)",
+                    "Code": "36488007",
+                    "Score": 0.4011644124984741
+                },
+                {
+                    "Description": "Rectal biopsy sample (specimen)",
+                    "Code": "309262006",
+                    "Score": 0.38442906737327576
+                }
+            ]
+        },
+        {
+            "Id": 21,
+            "Text": "Anus Tissue",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.821601390838623,
+            "BeginOffset": 549,
+            "EndOffset": 560,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Tissue specimen from anus (specimen)",
+                    "Code": "128156008",
+                    "Score": 0.32119712233543396
+                },
+                {
+                    "Description": "Anus part (body structure)",
+                    "Code": "123956007",
+                    "Score": 0.18749330937862396
+                },
+                {
+                    "Description": "Structure of perivesical tissue (body structure)",
+                    "Code": "312505001",
+                    "Score": 0.15295958518981934
+                },
+                {
+                    "Description": "Skin structure of anus (body structure)",
+                    "Code": "59112000",
+                    "Score": 0.13538338243961334
+                },
+                {
+                    "Description": "Specimen from anus (specimen)",
+                    "Code": "119392008",
+                    "Score": 0.12589673697948456
+                }
+            ]
+        },
+        {
+            "Id": 22,
+            "Text": "Anus Tissue HISTOLOGY",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TEST_NAME",
+            "Score": 0.7172441482543945,
+            "BeginOffset": 549,
+            "EndOffset": 570,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Histologic test (procedure)",
+                    "Code": "714797009",
+                    "Score": 0.21079424023628235
+                },
+                {
+                    "Description": "Cytologic examination of anus (procedure)",
+                    "Code": "372295008",
+                    "Score": 0.1829056441783905
+                },
+                {
+                    "Description": "Histology laboratory test (navigational concept)",
+                    "Code": "395171002",
+                    "Score": 0.1686723232269287
+                },
+                {
+                    "Description": "Tissue specimen from anus (specimen)",
+                    "Code": "128156008",
+                    "Score": 0.1145065426826477
+                },
+                {
+                    "Description": "Biopsy of anus (procedure)",
+                    "Code": "36488007",
+                    "Score": 0.1051875501871109
+                }
+            ]
+        },
+        {
+            "Id": 23,
+            "Text": "TISSUE",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.7613970637321472,
+            "BeginOffset": 572,
+            "EndOffset": 578,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Tissue specimen from anus (specimen)",
+                    "Code": "128156008",
+                    "Score": 0.4142322838306427
+                },
+                {
+                    "Description": "Body tissue structure (body structure)",
+                    "Code": "85756007",
+                    "Score": 0.3517989218235016
+                },
+                {
+                    "Description": "Structure of perivesical tissue (body structure)",
+                    "Code": "312505001",
+                    "Score": 0.3203776180744171
+                },
+                {
+                    "Description": "Skin structure tissue (body structure)",
+                    "Code": "314818000",
+                    "Score": 0.2995852530002594
+                },
+                {
+                    "Description": "Rectal tissue sample (specimen)",
+                    "Code": "309200000",
+                    "Score": 0.28399696946144104
+                }
+            ]
+        },
+        {
+            "Id": 25,
+            "Text": "anal skin",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.7172441482543945,
+            "BeginOffset": 650,
+            "EndOffset": 659,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Anal skin tag (disorder)",
+                    "Code": "195469007",
+                    "Score": 0.12507624924182892
+                },
+                {
+                    "Description": "Anal structure (body structure)",
+                    "Code": "53505006",
+                    "Score": 0.07547292858362198
+                },
+                {
+                    "Description": "Skin structure of anus (body structure)",
+                    "Code": "59112000",
+                    "Score": 0.0742594301700592
+                },
+                {
+                    "Description": "Anal region structure (body structure)",
+                    "Code": "81939000",
+                    "Score": 0.04123365134000778
+                },
+                {
+                    "Description": "Structure of anal gland (body structure)",
+                    "Code": "78293005",
+                    "Score": 0.0399085134267807
+                }
+            ]
+        },
+        {
+            "Id": 26,
+            "Text": "anal skin tag",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 650,
+            "EndOffset": 663,
+            "Attributes": [
+                {
+                    "Category": "ANATOMY",
+                    "Type": "SYSTEM_ORGAN_SITE",
+                    "Score": 0.7172441482543945,
+                    "RelationshipScore": 0.7223333120346069,
+                    "RelationshipType": "SYSTEM_ORGAN_SITE",
+                    "Id": 25,
+                    "BeginOffset": 650,
+                    "EndOffset": 659,
+                    "Text": "anal skin",
+                    "Traits": [],
+                    "SNOMEDCTConcepts": [
+                        {
+                            "Description": "Anal skin tag (disorder)",
+                            "Code": "195469007",
+                            "Score": 0.12507624924182892
+                        },
+                        {
+                            "Description": "Anal structure (body structure)",
+                            "Code": "53505006",
+                            "Score": 0.07547292858362198
+                        },
+                        {
+                            "Description": "Skin structure of anus (body structure)",
+                            "Code": "59112000",
+                            "Score": 0.0742594301700592
+                        },
+                        {
+                            "Description": "Anal region structure (body structure)",
+                            "Code": "81939000",
+                            "Score": 0.04123365134000778
+                        },
+                        {
+                            "Description": "Structure of anal gland (body structure)",
+                            "Code": "78293005",
+                            "Score": 0.0399085134267807
+                        }
+                    ]
+                }
+            ],
+            "Traits": [
+                {
+                    "Name": "DIAGNOSIS",
+                    "Score": 0.47435709834098816
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Anal skin tag (disorder)",
+                    "Code": "195469007",
+                    "Score": 0.148523211479187
+                },
+                {
+                    "Description": "Rectal skin tag (disorder)",
+                    "Code": "195470008",
+                    "Score": 0.02404836006462574
+                },
+                {
+                    "Description": "Anal tag removal (procedure)",
+                    "Code": "287800000",
+                    "Score": 0.019935304298996925
+                },
+                {
+                    "Description": "Structure of anal plate (body structure)",
+                    "Code": "15851001",
+                    "Score": 0.018643958494067192
+                },
+                {
+                    "Description": "Structure of anal gland (body structure)",
+                    "Code": "78293005",
+                    "Score": 0.01611746847629547
+                }
+            ]
+        },
+        {
+            "Id": 27,
+            "Text": "Labs",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TEST_NAME",
+            "Score": 0.5971075296401978,
+            "BeginOffset": 675,
+            "EndOffset": 679,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Laboratory test (procedure)",
+                    "Code": "15220000",
+                    "Score": 0.030530717223882675
+                },
+                {
+                    "Description": "Laboratory (environment)",
+                    "Code": "261904005",
+                    "Score": 0.007473875302821398
+                },
+                {
+                    "Description": "Result, lab.- general (observable entity)",
+                    "Code": "275924004",
+                    "Score": 0.004757493268698454
+                },
+                {
+                    "Description": "Laboratory reporting (procedure)",
+                    "Code": "16488004",
+                    "Score": 0.004533092491328716
+                },
+                {
+                    "Description": "Laboratory data interpretation (procedure)",
+                    "Code": "386344002",
+                    "Score": 0.003942199982702732
+                }
+            ]
+        },
+        {
+            "Id": 28,
+            "Text": "labs",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TEST_NAME",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 694,
+            "EndOffset": 698,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "NEGATION",
+                    "Score": 0.5296252369880676
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Laboratory test (procedure)",
+                    "Code": "15220000",
+                    "Score": 0.03225264325737953
+                },
+                {
+                    "Description": "Result, lab.- general (observable entity)",
+                    "Code": "275924004",
+                    "Score": 0.014530866406857967
+                },
+                {
+                    "Description": "Laboratory (environment)",
+                    "Code": "261904005",
+                    "Score": 0.008706147782504559
+                },
+                {
+                    "Description": "Laboratory reporting (procedure)",
+                    "Code": "16488004",
+                    "Score": 0.006342767272144556
+                },
+                {
+                    "Description": "Laboratory data interpretation (procedure)",
+                    "Code": "386344002",
+                    "Score": 0.005428117234259844
+                }
+            ]
+        }
+    ],
+    "ModelVersion": "3.3.0.20220301",
+    "SNOMEDCTDetails": {
+        "Edition": "US",
+        "Language": "en",
+        "VersionDate": "20220301"
+    },
+    "Characters": {
+        "OriginalTextCharacters": 698
+    },
+    "ResponseMetadata": {
+        "RequestId": "f56f65c6-b2a5-444d-b627-c3a613b5dfec",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+            "x-amzn-requestid": "f56f65c6-b2a5-444d-b627-c3a613b5dfec",
+            "content-type": "application/x-amz-json-1.1",
+            "content-length": "16520",
+            "date": "Fri, 03 Apr 2026 05:20:19 GMT"
+        },
+        "RetryAttempts": 0
+    }
+}

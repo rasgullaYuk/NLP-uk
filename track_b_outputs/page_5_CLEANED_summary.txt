@@ -1,0 +1,5 @@
+[MOCK SUMMARY - AWS BEDROCK LOCKED BY ADMIN]
+This is a placeholder clinical summary. The patient document was successfully processed by Textract and mapped to SNOMED CT codes by Comprehend Medical. 
+
+Please review the extracted medical entities in the adjacent panel. 
+(Once the professor unlocks Amazon Bedrock, the AI-generated clinical summary will appear here).

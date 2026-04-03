@@ -1,0 +1,143 @@
+{
+    "Entities": [
+        {
+            "Id": 1,
+            "Text": "medication",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.7613970637321472,
+            "BeginOffset": 35,
+            "EndOffset": 45,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Medicinal prescription record (record artifact)",
+                    "Code": "761938008",
+                    "Score": 0.1581311821937561
+                },
+                {
+                    "Description": "Prescription of drug (procedure)",
+                    "Code": "33633005",
+                    "Score": 0.13620619475841522
+                },
+                {
+                    "Description": "Drug or medicament (substance)",
+                    "Code": "410942007",
+                    "Score": 0.11550707370042801
+                },
+                {
+                    "Description": "Drug therapy (procedure)",
+                    "Code": "416608005",
+                    "Score": 0.11226168274879456
+                },
+                {
+                    "Description": "Drug prescription (situation)",
+                    "Code": "182817000",
+                    "Score": 0.10781887918710709
+                }
+            ]
+        },
+        {
+            "Id": 2,
+            "Text": "medication",
+            "Category": "TEST_TREATMENT_PROCEDURE",
+            "Type": "TREATMENT_NAME",
+            "Score": 0.7172441482543945,
+            "BeginOffset": 72,
+            "EndOffset": 82,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Drug therapy (procedure)",
+                    "Code": "416608005",
+                    "Score": 0.020081311464309692
+                },
+                {
+                    "Description": "Drug or medicament (substance)",
+                    "Code": "410942007",
+                    "Score": 0.017252864316105843
+                },
+                {
+                    "Description": "Medicinal product (product)",
+                    "Code": "763158003",
+                    "Score": 0.011871538124978542
+                },
+                {
+                    "Description": "Medicinal prescription record (record artifact)",
+                    "Code": "761938008",
+                    "Score": 0.010662486776709557
+                },
+                {
+                    "Description": "Benzodiazepine receptor antagonist (disposition)",
+                    "Code": "734630008",
+                    "Score": 0.009686349891126156
+                }
+            ]
+        },
+        {
+            "Id": 23,
+            "Text": "pain",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.9584784507751465,
+            "BeginOffset": 465,
+            "EndOffset": 469,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "SYMPTOM",
+                    "Score": 0.8203471899032593
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Pain (finding)",
+                    "Code": "22253000",
+                    "Score": 0.16481606662273407
+                },
+                {
+                    "Description": "Aching pain (finding)",
+                    "Code": "27635008",
+                    "Score": 0.004992814268916845
+                },
+                {
+                    "Description": "Pain relief (procedure)",
+                    "Code": "182970005",
+                    "Score": 0.004222114570438862
+                },
+                {
+                    "Description": "Renal pain (finding)",
+                    "Code": "274279008",
+                    "Score": 0.00411810539662838
+                },
+                {
+                    "Description": "Pain in finger of right hand (finding)",
+                    "Code": "316881000119109",
+                    "Score": 0.004113649018108845
+                }
+            ]
+        }
+    ],
+    "ModelVersion": "3.3.0.20220301",
+    "SNOMEDCTDetails": {
+        "Edition": "US",
+        "Language": "en",
+        "VersionDate": "20220301"
+    },
+    "Characters": {
+        "OriginalTextCharacters": 470
+    },
+    "ResponseMetadata": {
+        "RequestId": "f189f3da-9954-4d79-a41b-f3f0c563e8ad",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+            "x-amzn-requestid": "f189f3da-9954-4d79-a41b-f3f0c563e8ad",
+            "content-type": "application/x-amz-json-1.1",
+            "content-length": "2245",
+            "date": "Fri, 03 Apr 2026 05:20:14 GMT"
+        },
+        "RetryAttempts": 0
+    }
+}

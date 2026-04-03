@@ -1,0 +1,67 @@
+{
+    "Entities": [
+        {
+            "Id": 6,
+            "Text": "Haemorrhoids",
+            "Category": "MEDICAL_CONDITION",
+            "Type": "DX_NAME",
+            "Score": 0.8435389995574951,
+            "BeginOffset": 738,
+            "EndOffset": 750,
+            "Attributes": [],
+            "Traits": [
+                {
+                    "Name": "DIAGNOSIS",
+                    "Score": 0.6248409748077393
+                }
+            ],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Hemorrhoids (disorder)",
+                    "Code": "70153002",
+                    "Score": 0.18325023353099823
+                },
+                {
+                    "Description": "Thrombosed hemorrhoids (disorder)",
+                    "Code": "75955007",
+                    "Score": 0.008318421430885792
+                },
+                {
+                    "Description": "Bleeding hemorrhoids (disorder)",
+                    "Code": "51551000",
+                    "Score": 0.007599246222525835
+                },
+                {
+                    "Description": "Lymphorrhoids (disorder)",
+                    "Code": "234115007",
+                    "Score": 0.0061539276503026485
+                },
+                {
+                    "Description": "Hemorrhoid operation (procedure)",
+                    "Code": "235388001",
+                    "Score": 0.006010839715600014
+                }
+            ]
+        }
+    ],
+    "ModelVersion": "3.3.0.20220301",
+    "SNOMEDCTDetails": {
+        "Edition": "US",
+        "Language": "en",
+        "VersionDate": "20220301"
+    },
+    "Characters": {
+        "OriginalTextCharacters": 780
+    },
+    "ResponseMetadata": {
+        "RequestId": "d0256e9f-9e35-40be-8401-d689fcf7507a",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+            "x-amzn-requestid": "d0256e9f-9e35-40be-8401-d689fcf7507a",
+            "content-type": "application/x-amz-json-1.1",
+            "content-length": "876",
+            "date": "Fri, 03 Apr 2026 05:20:18 GMT"
+        },
+        "RetryAttempts": 0
+    }
+}

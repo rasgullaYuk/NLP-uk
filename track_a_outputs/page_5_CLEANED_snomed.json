@@ -1,0 +1,176 @@
+{
+    "Entities": [
+        {
+            "Id": 1,
+            "Text": "Breast",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.5971075296401978,
+            "BeginOffset": 329,
+            "EndOffset": 335,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Breast structure (body structure)",
+                    "Code": "76752008",
+                    "Score": 0.4786859154701233
+                },
+                {
+                    "Description": "Both breasts (body structure)",
+                    "Code": "63762007",
+                    "Score": 0.0081908218562603
+                },
+                {
+                    "Description": "Left breast structure (body structure)",
+                    "Code": "80248007",
+                    "Score": 0.004853726364672184
+                },
+                {
+                    "Description": "Structure of breast and/or endocrine system (body structure)",
+                    "Code": "305072005",
+                    "Score": 0.004361249506473541
+                },
+                {
+                    "Description": "Nipple structure (body structure)",
+                    "Code": "24142002",
+                    "Score": 0.003894215915352106
+                }
+            ]
+        },
+        {
+            "Id": 2,
+            "Text": "Colorectal",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.6603351831436157,
+            "BeginOffset": 393,
+            "EndOffset": 403,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Colorectal (qualifier value)",
+                    "Code": "264267007",
+                    "Score": 0.13483332097530365
+                },
+                {
+                    "Description": "Color of stool (observable entity)",
+                    "Code": "167604002",
+                    "Score": 0.007044486701488495
+                },
+                {
+                    "Description": "Colorectal pressure (observable entity)",
+                    "Code": "12887001",
+                    "Score": 0.00564481969922781
+                },
+                {
+                    "Description": "Melena (disorder)",
+                    "Code": "2901004",
+                    "Score": 0.004106216598302126
+                },
+                {
+                    "Description": "Colorectal surgeon (occupation)",
+                    "Code": "309379003",
+                    "Score": 0.0029941110406070948
+                }
+            ]
+        },
+        {
+            "Id": 3,
+            "Text": "UpperGI",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 500,
+            "EndOffset": 507,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Upper gastrointestinal tract structure (body structure)",
+                    "Code": "62834003",
+                    "Score": 5.27104816683277e-07
+                },
+                {
+                    "Description": "Upper abdomen structure (body structure)",
+                    "Code": "80581009",
+                    "Score": 2.6629459171090275e-07
+                },
+                {
+                    "Description": "Upper (qualifier value)",
+                    "Code": "261183002",
+                    "Score": 2.3837553442263015e-07
+                },
+                {
+                    "Description": "Upper digestive tract structure (body structure)",
+                    "Code": "127868003",
+                    "Score": 1.7467526447489945e-07
+                },
+                {
+                    "Description": "Upper genitourinary tract structure (body structure)",
+                    "Code": "45308003",
+                    "Score": 1.7171970512208645e-07
+                }
+            ]
+        },
+        {
+            "Id": 8,
+            "Text": "Vascular",
+            "Category": "ANATOMY",
+            "Type": "SYSTEM_ORGAN_SITE",
+            "Score": 0.5330596566200256,
+            "BeginOffset": 893,
+            "EndOffset": 901,
+            "Attributes": [],
+            "Traits": [],
+            "SNOMEDCTConcepts": [
+                {
+                    "Description": "Blood vessel structure (body structure)",
+                    "Code": "59820001",
+                    "Score": 0.005418878048658371
+                },
+                {
+                    "Description": "Structure of vascular body (body structure)",
+                    "Code": "181383001",
+                    "Score": 0.0038356909062713385
+                },
+                {
+                    "Description": "Systemic vascular structure (body structure)",
+                    "Code": "281157001",
+                    "Score": 0.002600084524601698
+                },
+                {
+                    "Description": "Blood vessel part (body structure)",
+                    "Code": "119206002",
+                    "Score": 0.0016574093606323004
+                },
+                {
+                    "Description": "Vascular measure (observable entity)",
+                    "Code": "252059006",
+                    "Score": 0.0015588275855407119
+                }
+            ]
+        }
+    ],
+    "ModelVersion": "3.3.0.20220301",
+    "SNOMEDCTDetails": {
+        "Edition": "US",
+        "Language": "en",
+        "VersionDate": "20220301"
+    },
+    "Characters": {
+        "OriginalTextCharacters": 1832
+    },
+    "ResponseMetadata": {
+        "RequestId": "51da37eb-2170-41dd-8649-633eddc02f1f",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+            "x-amzn-requestid": "51da37eb-2170-41dd-8649-633eddc02f1f",
+            "content-type": "application/x-amz-json-1.1",
+            "content-length": "2992",
+            "date": "Fri, 03 Apr 2026 05:20:24 GMT"
+        },
+        "RetryAttempts": 0
+    }
+}
