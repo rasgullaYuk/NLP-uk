@@ -1,0 +1,22 @@
+# Core ML/Vision
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+
+# AWS SDK
+boto3>=1.28.0
+
+# Utilities
+numpy>=1.24.0
+scipy>=1.10.0
+python-dateutil>=2.8.0
+
+# PDF Processing
+pdf2image>=1.16.0
+PyMuPDF>=1.22.0
+
+# For LayoutLMv3
+sentencepiece>=0.1.99
+protobuf>=3.20.0
