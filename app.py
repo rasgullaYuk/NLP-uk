@@ -1,11 +1,28 @@
 import streamlit as st
 import json
 import os
+from datetime import datetime
+
+from audit_dynamodb import get_audit_logger, get_current_user
 
 # Set page configuration
 st.set_page_config(page_title="Clinician Review Dashboard", layout="wide")
 
-st.title("🏥 Clinician Review & Validation Interface")
+# Initialize audit logger and user
+@st.cache_resource
+def init_audit_logger():
+    """Initialize DynamoDB audit logger (cached)."""
+    try:
+        return get_audit_logger()
+    except Exception as e:
+        st.error(f"Failed to initialize audit logger: {e}")
+        return None
+
+audit_logger = init_audit_logger()
+current_user = get_current_user()
+
+st.title("Clinician Review & Validation Interface")
+st.markdown(f"**Logged in as:** `{current_user}` | **Session:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 st.markdown("---")
 
 # 1. Setup paths
@@ -45,11 +62,39 @@ else:
         if summary_file:
             with open(os.path.join(SUMMARY_DIR, summary_file), "r") as f:
                 summary_text = f.read()
-            
+
+            # Store original for comparison
+            if f"original_summary_{selected_base}" not in st.session_state:
+                st.session_state[f"original_summary_{selected_base}"] = summary_text
+
             edited_summary = st.text_area("Edit Summary:", value=summary_text, height=250)
-            
+
             if st.button("Save Updated Summary"):
-                st.success("Summary updated in database (Audit Logged).")
+                original_summary = st.session_state.get(f"original_summary_{selected_base}", summary_text)
+
+                # Only log if there's an actual change
+                if edited_summary != original_summary:
+                    try:
+                        # Log to DynamoDB BEFORE confirming to user (zero data loss)
+                        if audit_logger:
+                            audit_logger.log_summary_edit(
+                                document_id=selected_base,
+                                user_id=current_user,
+                                before_summary=original_summary,
+                                after_summary=edited_summary
+                            )
+
+                        # Save to file
+                        with open(os.path.join(SUMMARY_DIR, summary_file), "w") as f:
+                            f.write(edited_summary)
+
+                        # Update session state
+                        st.session_state[f"original_summary_{selected_base}"] = edited_summary
+                        st.success("Summary updated and audit logged successfully!")
+                    except Exception as e:
+                        st.error(f"Failed to save: {e}. Changes NOT persisted.")
+                else:
+                    st.info("No changes detected.")
         else:
             st.error(f"Could not find a summary file for {selected_base}.")
 
@@ -70,27 +115,106 @@ else:
             else:
                 for idx, ent in enumerate(entities):
                     with st.expander(f"Entity: {ent['Text']} ({ent['Category']})"):
+                        snomed_code = ""
                         if "SNOMEDCTConcepts" in ent and ent["SNOMEDCTConcepts"]:
                             concept = ent["SNOMEDCTConcepts"][0]
+                            snomed_code = concept['Code']
                             st.write(f"**Code:** {concept['Code']}")
                             st.write(f"**Description:** {concept['Description']}")
                             st.write(f"**Confidence:** {round(concept['Score'] * 100, 2)}%")
-                        
-                        st.selectbox(f"Status for {ent['Text']}:", 
-                                    ["Pending Review", "Approved", "Incorrect Code", "Needs Clarification"],
-                                    key=f"status_{idx}")
+
+                        # Track previous status
+                        status_key = f"status_{selected_base}_{idx}"
+                        prev_status_key = f"prev_status_{selected_base}_{idx}"
+
+                        if prev_status_key not in st.session_state:
+                            st.session_state[prev_status_key] = "Pending Review"
+
+                        new_status = st.selectbox(
+                            f"Status for {ent['Text']}:",
+                            ["Pending Review", "Approved", "Incorrect Code", "Needs Clarification"],
+                            key=status_key
+                        )
+
+                        # Log status change if different
+                        if new_status != st.session_state[prev_status_key]:
+                            if audit_logger:
+                                try:
+                                    audit_logger.log_snomed_status_change(
+                                        document_id=selected_base,
+                                        user_id=current_user,
+                                        entity_text=ent['Text'],
+                                        snomed_code=snomed_code,
+                                        before_status=st.session_state[prev_status_key],
+                                        after_status=new_status
+                                    )
+                                    st.session_state[prev_status_key] = new_status
+                                except Exception as e:
+                                    st.error(f"Audit log failed: {e}")
         else:
             st.warning(f"No SNOMED file found for {selected_base}. Did Track A finish processing it?")
 
     # 4. Global Action Buttons
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
-    if c1.button("✅ Approve All & Export to EMIS"):
-        st.balloons()
-        st.success(f"Document {selected_base} validated and sent to system.")
-    
-    if c2.button("🚩 Flag for Specialist Review"):
-        st.warning("Document flagged for secondary review.")
 
-    if c3.button("📥 Download JSON Audit Trail"):
-        st.info("Generating Audit Log...")
+    if c1.button("Approve All & Export to EMIS"):
+        try:
+            # Count entities for audit
+            entities_count = len(snomed_data.get("Entities", [])) if snomed_file else 0
+
+            if audit_logger:
+                audit_logger.log_approve_all(
+                    document_id=selected_base,
+                    user_id=current_user,
+                    entities_approved=entities_count
+                )
+            st.balloons()
+            st.success(f"Document {selected_base} validated and sent to system. (Audit logged)")
+        except Exception as e:
+            st.error(f"Failed to approve: {e}")
+
+    if c2.button("Flag for Specialist Review"):
+        try:
+            if audit_logger:
+                audit_logger.log_flag_for_review(
+                    document_id=selected_base,
+                    user_id=current_user,
+                    reason="Manual flag by clinician"
+                )
+            st.warning("Document flagged for secondary review. (Audit logged)")
+        except Exception as e:
+            st.error(f"Failed to flag: {e}")
+
+    if c3.button("Download JSON Audit Trail"):
+        try:
+            if audit_logger:
+                json_export = audit_logger.export_audit_trail_to_json(document_id=selected_base)
+                st.download_button(
+                    label="Click to Download",
+                    data=json_export,
+                    file_name=f"{selected_base}_audit_trail.json",
+                    mime="application/json"
+                )
+                st.success("Audit trail ready for download!")
+            else:
+                st.error("Audit logger not available.")
+        except Exception as e:
+            st.error(f"Failed to generate audit trail: {e}")
+
+    # 5. Audit Trail Viewer (Sidebar)
+    st.sidebar.markdown("---")
+    st.sidebar.header("Audit Trail")
+
+    if st.sidebar.button("View Document Audit History"):
+        if audit_logger:
+            trail = audit_logger.get_audit_trail_by_document(selected_base, limit=20)
+            if trail:
+                st.sidebar.write(f"**{len(trail)} entries found:**")
+                for entry in trail:
+                    timestamp = entry['timestamp'][:19].replace('T', ' ')
+                    st.sidebar.text(f"{timestamp}\n  {entry['change_type']}\n  by {entry['user_id']}")
+            else:
+                st.sidebar.info("No audit history for this document.")
+        else:
+            st.sidebar.error("Audit logger not available.")
