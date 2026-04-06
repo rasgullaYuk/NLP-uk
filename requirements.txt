@@ -7,6 +7,10 @@ opencv-python>=4.8.0
 
 # AWS SDK
 boto3>=1.28.0
+botocore>=1.31.0
+
+# Web UI
+streamlit>=1.28.0
 
 # Utilities
 numpy>=1.24.0
@@ -20,3 +24,6 @@ PyMuPDF>=1.22.0
 # For LayoutLMv3
 sentencepiece>=0.1.99
 protobuf>=3.20.0
+
+# Data Lake & Parquet (for S3 exports)
+pyarrow>=14.0.0
