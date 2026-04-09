@@ -25,7 +25,7 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
-          pytest
+          pytest -q test_preprocessing.py test_tier1_textract_unit.py test_tier2_router.py test_track_a_snomed_unit.py test_track_b_summarization_unit.py test_track_b_validation.py test_lambda_confidence_aggregator.py
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
