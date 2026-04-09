@@ -1,0 +1,52 @@
+{
+  "aspirin": {
+    "aliases": ["asa"],
+    "min_dose_mg": 25,
+    "max_dose_mg": 1000
+  },
+  "metformin": {
+    "aliases": [],
+    "min_dose_mg": 250,
+    "max_dose_mg": 3000
+  },
+  "lisinopril": {
+    "aliases": [],
+    "min_dose_mg": 2.5,
+    "max_dose_mg": 80
+  },
+  "atorvastatin": {
+    "aliases": [],
+    "min_dose_mg": 5,
+    "max_dose_mg": 80
+  },
+  "clopidogrel": {
+    "aliases": [],
+    "min_dose_mg": 37.5,
+    "max_dose_mg": 300
+  },
+  "metoprolol": {
+    "aliases": [],
+    "min_dose_mg": 12.5,
+    "max_dose_mg": 400
+  },
+  "amoxicillin": {
+    "aliases": [],
+    "min_dose_mg": 125,
+    "max_dose_mg": 3000
+  },
+  "ibuprofen": {
+    "aliases": [],
+    "min_dose_mg": 100,
+    "max_dose_mg": 3200
+  },
+  "paracetamol": {
+    "aliases": ["acetaminophen"],
+    "min_dose_mg": 125,
+    "max_dose_mg": 4000
+  },
+  "insulin": {
+    "aliases": [],
+    "min_dose_units": 1,
+    "max_dose_units": 300
+  }
+}

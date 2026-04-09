@@ -32,6 +32,7 @@ from hipaa_compliance import (
     scrub_json_value,
     scrub_text_for_logs,
 )
+from track_b_validation import MedicalValidationEngine
 
 # AWS Configuration
 AWS_REGION = "us-east-1"
@@ -85,6 +86,10 @@ class SummaryOutput:
     confidence_score: float
     validation_passed: bool
     validation_errors: List[str]
+    validation_confidence_score: float
+    hallucination_score: float
+    validation_audit_log: List[Dict[str, Any]]
+    auto_corrections: List[str]
     generation_time_ms: int
 
 
@@ -589,22 +594,9 @@ class SummaryValidator:
     """
     Validates generated summaries with rule-based checks and schema validation.
     """
-
-    # Medical terms that should appear in clinical summaries
-    EXPECTED_TERMS = {
-        DocumentType.DISCHARGE_SUMMARY: ['diagnosis', 'medication', 'follow', 'instruction'],
-        DocumentType.PRESCRIPTION: ['dose', 'medication', 'take', 'times'],
-        DocumentType.LAB_REPORT: ['result', 'range', 'test', 'value'],
-    }
-
-    # Hallucination indicators (only flag strong AI speculation patterns)
-    HALLUCINATION_PATTERNS = [
-        r'(?i)i (think|believe|assume)',
-        r'(?i)based on my (knowledge|understanding)',
-        r'(?i)as an AI|as a language model',
-        # Note: "typically/usually/generally" removed - these are valid in medical context
-        # e.g., "normal heart function is usually above 50%" is clinically accurate
-    ]
+    def __init__(self):
+        self.engine = MedicalValidationEngine()
+        self.last_report: Dict[str, Any] = {}
 
     def validate(self,
                  summary_output: Dict,
@@ -621,134 +613,20 @@ class SummaryValidator:
         Returns:
             Tuple of (is_valid, list of errors)
         """
-        errors = []
-
-        # 1. Schema validation
-        schema_errors = self._validate_schema(summary_output)
-        errors.extend(schema_errors)
-
-        # 2. Content validation
-        content_errors = self._validate_content(summary_output, source_text, document_type)
-        errors.extend(content_errors)
-
-        # 3. Hallucination check
-        hallucination_errors = self._check_hallucinations(summary_output, source_text)
-        errors.extend(hallucination_errors)
-
-        # 4. Medication validation
-        if summary_output.get('medications'):
-            med_errors = self._validate_medications(summary_output['medications'], source_text)
-            errors.extend(med_errors)
-
-        return len(errors) == 0, errors
-
-    def _validate_schema(self, output: Dict) -> List[str]:
-        """Validates output against JSON schema."""
-        errors = []
-        required_fields = ['summary', 'key_points', 'medications', 'diagnoses', 'follow_up_actions']
-
-        for field in required_fields:
-            if field not in output:
-                errors.append(f"Missing required field: {field}")
-
-        if 'confidence_score' in output:
-            score = output['confidence_score']
-            if not isinstance(score, (int, float)) or score < 0 or score > 1:
-                errors.append("confidence_score must be between 0 and 1")
-
-        return errors
-
-    def _validate_content(self, output: Dict, source: str, doc_type: DocumentType) -> List[str]:
-        """Validates summary content against source."""
-        errors = []
-
-        summary = output.get('summary', '')
-
-        # Check for empty summary
-        if len(summary) < 50:
-            errors.append("Summary too short (minimum 50 characters)")
-
-        # Check for expected terms based on document type
-        expected = self.EXPECTED_TERMS.get(doc_type, [])
-        source_lower = source.lower()
-
-        for term in expected:
-            if term in source_lower and term not in summary.lower():
-                # Term in source but not in summary - might be missing info
-                pass  # Soft warning, not error
-
-        return errors
-
-    def _check_hallucinations(self, output: Dict, source: str) -> List[str]:
-        """Checks for potential hallucinations."""
-        errors = []
-        summary = output.get('summary', '')
-
-        # Check for hallucination patterns
-        for pattern in self.HALLUCINATION_PATTERNS:
-            if re.search(pattern, summary):
-                errors.append(f"Potential hallucination detected: pattern '{pattern}'")
-
-        # Check if diagnoses are mentioned in source
-        for diagnosis in output.get('diagnoses', []):
-            if diagnosis.lower() not in source.lower() and len(diagnosis) > 3:
-                # Check for partial match
-                words = diagnosis.lower().split()
-                if not any(word in source.lower() for word in words if len(word) > 3):
-                    errors.append(f"Diagnosis not found in source: {diagnosis}")
-
-        return errors
-
-    def _validate_medications(self, medications: List[Dict], source: str) -> List[str]:
-        """Validates medication information against source."""
-        errors = []
-        source_lower = source.lower()
-
-        for med in medications:
-            med_name = med.get('name', '').lower()
-            if med_name and med_name not in source_lower:
-                # Check for common abbreviations
-                if not any(part in source_lower for part in med_name.split()):
-                    errors.append(f"Medication not found in source: {med.get('name')}")
-
-        return errors
+        _ = document_type  # Reserved for future document-type specific hard rules.
+        report = self.engine.validate(summary_output, source_text)
+        self.last_report = report
+        return report['validation_passed'], report['errors']
 
     def calculate_hallucination_score(self, output: Dict, source: str) -> float:
-        """
-        Calculates a hallucination score (0 = no hallucination, 1 = high hallucination).
+        _ = output
+        _ = source
+        if self.last_report:
+            return float(self.last_report.get("hallucination_score", 0.0))
+        return 0.0
 
-        Args:
-            output: Generated summary
-            source: Source document
-
-        Returns:
-            float: Hallucination score between 0 and 1
-        """
-        score = 0.0
-        checks = 0
-
-        # Check diagnoses
-        for diagnosis in output.get('diagnoses', []):
-            checks += 1
-            if diagnosis.lower() not in source.lower():
-                score += 1
-
-        # Check medications
-        for med in output.get('medications', []):
-            checks += 1
-            if med.get('name', '').lower() not in source.lower():
-                score += 1
-
-        # Check key points
-        for point in output.get('key_points', []):
-            checks += 1
-            # Check if key words from point are in source
-            words = [w for w in point.lower().split() if len(w) > 4]
-            matches = sum(1 for w in words if w in source.lower())
-            if words and matches / len(words) < 0.3:
-                score += 1
-
-        return score / max(checks, 1)
+    def get_last_report(self) -> Dict[str, Any]:
+        return self.last_report
 
 
 class TrackBPipeline:
@@ -830,10 +708,12 @@ class TrackBPipeline:
                 is_valid, validation_errors = self.validator.validate(
                     summary_data, document_text, doc_type
                 )
+                validation_report = self.validator.get_last_report()
+                corrected_summary = validation_report.get("corrected_output", summary_data)
 
                 # Calculate hallucination score
                 hallucination_score = self.validator.calculate_hallucination_score(
-                    summary_data, document_text
+                    corrected_summary, document_text
                 )
 
                 generation_time = int((time.time() - role_start) * 1000)
@@ -841,14 +721,18 @@ class TrackBPipeline:
                 results[role.value] = SummaryOutput(
                     document_id=document_id,
                     role=role,
-                    summary=summary_data.get('summary', ''),
-                    key_points=summary_data.get('key_points', []),
-                    medications=summary_data.get('medications', []),
-                    diagnoses=summary_data.get('diagnoses', []),
-                    follow_up_actions=summary_data.get('follow_up_actions', []),
-                    confidence_score=summary_data.get('confidence_score', 0.5),
+                    summary=corrected_summary.get('summary', ''),
+                    key_points=corrected_summary.get('key_points', []),
+                    medications=corrected_summary.get('medications', []),
+                    diagnoses=corrected_summary.get('diagnoses', []),
+                    follow_up_actions=corrected_summary.get('follow_up_actions', []),
+                    confidence_score=corrected_summary.get('confidence_score', 0.5),
                     validation_passed=is_valid,
                     validation_errors=validation_errors,
+                    validation_confidence_score=validation_report.get('validation_confidence_score', 0.0),
+                    hallucination_score=hallucination_score,
+                    validation_audit_log=validation_report.get('audit_log', []),
+                    auto_corrections=validation_report.get('auto_corrections', []),
                     generation_time_ms=generation_time
                 )
 
@@ -869,6 +753,10 @@ class TrackBPipeline:
                     confidence_score=0,
                     validation_passed=False,
                     validation_errors=[str(e)],
+                    validation_confidence_score=0.0,
+                    hallucination_score=1.0,
+                    validation_audit_log=[],
+                    auto_corrections=[],
                     generation_time_ms=0
                 )
 
@@ -939,6 +827,10 @@ class TrackBPipeline:
                     'confidence_score': output.confidence_score,
                     'validation_passed': output.validation_passed,
                     'validation_errors': output.validation_errors,
+                    'validation_confidence_score': output.validation_confidence_score,
+                    'hallucination_score': output.hallucination_score,
+                    'validation_audit_log': output.validation_audit_log,
+                    'auto_corrections': output.auto_corrections,
                     'generation_time_ms': output.generation_time_ms,
                     'generated_at': datetime.utcnow().isoformat() + 'Z',
                     'phi_detection': phi_summary,
