@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from lambda_confidence_aggregator import (
@@ -18,6 +19,7 @@ from lambda_confidence_aggregator import (
 
 SUMMARY_ROLES = ("clinician", "patient", "pharmacist")
 DEFAULT_MEDIUM_THRESHOLD = 0.60
+ACTION_PRIORITY_OPTIONS = ("High", "Medium", "Low")
 
 _DOC_SUFFIXES = (
     "_clinician_summary",
@@ -268,6 +270,95 @@ def format_actions_for_text(actions: List[Any]) -> str:
         else:
             normalized.append(str(action).strip())
     return "\n".join([line for line in normalized if line])
+
+
+def _normalize_due_date(value: Any, default_due_date: date) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10]).isoformat()
+        except ValueError:
+            return default_due_date.isoformat()
+    return default_due_date.isoformat()
+
+
+def normalize_action_items(
+    actions: List[Any],
+    default_assignee: str = "",
+    default_due_date: Optional[date] = None,
+) -> List[Dict[str, str]]:
+    due_date_default = default_due_date or (date.today() + timedelta(days=7))
+    normalized_items: List[Dict[str, str]] = []
+
+    for action in actions or []:
+        if isinstance(action, dict):
+            action_text = str(
+                action.get("action_text")
+                or action.get("action")
+                or action.get("text")
+                or action.get("instruction")
+                or ""
+            ).strip()
+            priority = str(action.get("priority", "Medium")).strip().title()
+            assignee = str(action.get("assignee", default_assignee)).strip()
+            snomed_code = str(action.get("snomed_code", "")).strip()
+            action_due_date = _normalize_due_date(action.get("due_date"), due_date_default)
+        else:
+            action_text = str(action).strip()
+            priority = "Medium"
+            assignee = default_assignee
+            snomed_code = ""
+            action_due_date = due_date_default.isoformat()
+
+        if priority not in ACTION_PRIORITY_OPTIONS:
+            priority = "Medium"
+
+        if action_text:
+            normalized_items.append(
+                {
+                    "action_text": action_text,
+                    "due_date": action_due_date,
+                    "priority": priority,
+                    "assignee": assignee,
+                    "snomed_code": snomed_code,
+                }
+            )
+
+    return normalized_items
+
+
+def serialize_action_items(
+    actions: List[Dict[str, Any]],
+    default_due_date: Optional[date] = None,
+) -> List[Dict[str, str]]:
+    due_date_default = default_due_date or (date.today() + timedelta(days=7))
+    serialized: List[Dict[str, str]] = []
+
+    for action in actions or []:
+        action_text = str(action.get("action_text", "")).strip()
+        assignee = str(action.get("assignee", "")).strip()
+        snomed_code = str(action.get("snomed_code", "")).strip()
+        if not action_text and not assignee and not snomed_code:
+            continue
+
+        priority = str(action.get("priority", "Medium")).strip().title()
+        if priority not in ACTION_PRIORITY_OPTIONS:
+            priority = "Medium"
+
+        serialized.append(
+            {
+                "action_text": action_text,
+                "due_date": _normalize_due_date(action.get("due_date"), due_date_default),
+                "priority": priority,
+                "assignee": assignee,
+                "snomed_code": snomed_code,
+            }
+        )
+
+    return serialized
 
 
 def confidence_band(

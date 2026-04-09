@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
 import streamlit as st
@@ -8,6 +8,7 @@ import streamlit as st
 from audit_dynamodb import get_audit_logger, get_current_user
 from lambda_confidence_aggregator import DEFAULT_THRESHOLD
 from review_interface_utils import (
+    ACTION_PRIORITY_OPTIONS,
     SUMMARY_ROLES,
     compute_confidence_bundle,
     confidence_visual,
@@ -16,8 +17,10 @@ from review_interface_utils import (
     format_actions_for_text,
     load_all_role_summaries,
     load_snomed_entities,
+    normalize_action_items,
     parse_actions_from_text,
     recommendation_text,
+    serialize_action_items,
 )
 
 # Page configuration
@@ -38,6 +41,11 @@ CATEGORY_OPTIONS = [
     "Investigations",
     "Uncategorized",
 ]
+ROLE_ACTION_PANEL_TITLE = {
+    "clinician": "Clinician Actions",
+    "patient": "Patient Instructions",
+    "pharmacist": "Pharmacist Actions",
+}
 
 
 @st.cache_resource
@@ -106,6 +114,19 @@ def _snomed_category_options(current_category: str) -> List[str]:
     return options
 
 
+def _to_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return date.today() + timedelta(days=7)
+    return date.today() + timedelta(days=7)
+
+
 def build_review_payload(
     document_id: str,
     current_user: str,
@@ -118,12 +139,18 @@ def build_review_payload(
     confidence_mode: str,
 ) -> Dict[str, Any]:
     summaries_payload: Dict[str, Any] = {}
+    role_based_actions_payload: Dict[str, Any] = {}
     for role in SUMMARY_ROLES:
         role_data = role_summaries.get(role, {})
         summary_key = f"{document_id}_{role}_summary_edit"
         actions_key = f"{document_id}_{role}_actions_edit"
+        action_items_key = f"{document_id}_{role}_action_items"
         decision_key = f"{document_id}_{role}_decision"
         override_key = f"{document_id}_{role}_override"
+        structured_actions = serialize_action_items(
+            st.session_state.get(action_items_key, [])
+        )
+        role_based_actions_payload[role] = structured_actions
 
         summaries_payload[role] = {
             "role": role,
@@ -134,6 +161,7 @@ def build_review_payload(
             "edited_follow_up_actions": parse_actions_from_text(
                 st.session_state.get(actions_key, "")
             ),
+            "structured_action_items": structured_actions,
             "decision": st.session_state.get(decision_key, DECISION_OPTIONS[0]),
             "override_confidence_gate": bool(st.session_state.get(override_key, False)),
         }
@@ -194,6 +222,7 @@ def build_review_payload(
         },
         "confidence_bundle": confidence_bundle,
         "summaries": summaries_payload,
+        "role_based_actions": role_based_actions_payload,
         "snomed": {"entities": snomed_payload},
     }
 
@@ -242,6 +271,8 @@ def log_review_changes(
         change_count += 1
 
     previous_summaries = previous_state.get("summaries", {})
+    previous_role_based_actions = previous_state.get("role_based_actions", {})
+    current_role_based_actions = current_state.get("role_based_actions", {})
     for role, summary_state in current_state.get("summaries", {}).items():
         previous_role = previous_summaries.get(role, {})
         before_summary = previous_role.get(
@@ -294,6 +325,21 @@ def log_review_changes(
                     "override_confidence_gate": after_override,
                 },
                 metadata={"field": f"{role}_review_decision"},
+            )
+            change_count += 1
+
+        before_structured_actions = previous_role_based_actions.get(
+            role, previous_role.get("structured_action_items", [])
+        )
+        after_structured_actions = current_role_based_actions.get(role, [])
+        if before_structured_actions != after_structured_actions:
+            audit_logger.log_change(
+                document_id=document_id,
+                user_id=current_user,
+                change_type="ROLE_ACTION_PLAN_EDIT",
+                before_state={"role": role, "actions": before_structured_actions},
+                after_state={"role": role, "actions": after_structured_actions},
+                metadata={"field": f"{role}_role_based_actions"},
             )
             change_count += 1
 
@@ -380,6 +426,13 @@ saved_review_state = load_review_state(review_state_path)
 role_summaries = load_all_role_summaries(selected_assets)
 snomed_entities = load_snomed_entities(selected_assets.get("snomed_json"))
 source_document_text = extract_textract_text(selected_assets.get("textract_json"))
+snomed_codes_for_actions = sorted(
+    {
+        str(entry.get("snomed_code", "")).strip()
+        for entry in snomed_entities
+        if str(entry.get("snomed_code", "")).strip()
+    }
+)
 
 confidence_bundle = compute_confidence_bundle(
     selected_assets, threshold=DEFAULT_THRESHOLD
@@ -443,6 +496,21 @@ for role in SUMMARY_ROLES:
     _setdefault_state(
         override_key,
         bool(role_state.get("override_confidence_gate", False)),
+    )
+
+# Initialize state for structured role-based action plans
+saved_role_actions = saved_review_state.get("role_based_actions", {})
+for role in SUMMARY_ROLES:
+    action_items_key = f"{selected_document}_{role}_action_items"
+    role_actions_default = saved_role_actions.get(role)
+    if role_actions_default is None:
+        role_actions_default = normalize_action_items(
+            role_summaries.get(role, {}).get("follow_up_actions", []),
+            default_assignee=role.title(),
+        )
+    _setdefault_state(
+        action_items_key,
+        [dict(item) for item in role_actions_default],
     )
 
 # Initialize state for SNOMED entity edits
@@ -552,7 +620,9 @@ with left_col:
 
 with right_col:
     st.subheader("Editable AI-Extracted Fields")
-    tab_summary, tab_snomed = st.tabs(["Summaries & Action Plans", "SNOMED Mapping"])
+    tab_summary, tab_snomed, tab_actions = st.tabs(
+        ["Summaries", "SNOMED Mapping", "Role-Based Action Plans"]
+    )
 
     with tab_summary:
         for role in SUMMARY_ROLES:
@@ -675,6 +745,120 @@ with right_col:
                         if selected_category:
                             st.caption(f"Current editable category: {selected_category}")
 
+    with tab_actions:
+        st.caption(
+            "Action panels are fully editable and exported with SNOMED linkage for EMIS integration."
+        )
+        for role in SUMMARY_ROLES:
+            role_data = role_summaries.get(role, {})
+            role_conf = float(role_data.get("confidence_score", 0.0)) or float(
+                system_unified_confidence
+            )
+            role_visual = confidence_visual(role_conf, threshold=confidence_threshold)
+            action_items_key = f"{selected_document}_{role}_action_items"
+            add_action_key = f"{selected_document}_{role}_add_action"
+            panel_title = ROLE_ACTION_PANEL_TITLE.get(role, f"{role.title()} Actions")
+
+            with st.expander(
+                f"{role_visual['icon']} {panel_title} ({role_visual['label']} - {role_conf:.3f})",
+                expanded=(role == "clinician"),
+            ):
+                if role_conf >= confidence_threshold:
+                    st.success("✅ High confidence action panel pre-filled from AI output.")
+                else:
+                    st.warning("⚠️ Low confidence action panel requires manual review.")
+
+                if st.button(f"Add {panel_title} Item", key=add_action_key):
+                    actions = list(st.session_state.get(action_items_key, []))
+                    actions.append(
+                        {
+                            "action_text": "",
+                            "due_date": (date.today() + timedelta(days=7)).isoformat(),
+                            "priority": "Medium",
+                            "assignee": role.title(),
+                            "snomed_code": "",
+                        }
+                    )
+                    st.session_state[action_items_key] = actions
+                    st.rerun()
+
+                action_rows = list(st.session_state.get(action_items_key, []))
+                if not action_rows:
+                    st.info("No actions added yet. Use the Add button to create role-specific tasks.")
+                remove_index = None
+
+                for idx, action in enumerate(action_rows):
+                    text_key = f"{selected_document}_{role}_action_text_{idx}"
+                    due_key = f"{selected_document}_{role}_action_due_{idx}"
+                    priority_key = f"{selected_document}_{role}_action_priority_{idx}"
+                    assignee_key = f"{selected_document}_{role}_action_assignee_{idx}"
+                    snomed_key = f"{selected_document}_{role}_action_snomed_{idx}"
+                    remove_key = f"{selected_document}_{role}_action_remove_{idx}"
+
+                    priority_default = str(action.get("priority", "Medium")).title()
+                    if priority_default not in ACTION_PRIORITY_OPTIONS:
+                        priority_default = "Medium"
+
+                    _setdefault_state(text_key, str(action.get("action_text", "")))
+                    _setdefault_state(due_key, _to_date(action.get("due_date")))
+                    _setdefault_state(priority_key, priority_default)
+                    _setdefault_state(
+                        assignee_key, str(action.get("assignee", role.title()))
+                    )
+
+                    snomed_options = [""] + list(snomed_codes_for_actions)
+                    current_snomed = str(action.get("snomed_code", "")).strip()
+                    if current_snomed and current_snomed not in snomed_options:
+                        snomed_options.append(current_snomed)
+                    _setdefault_state(
+                        snomed_key,
+                        current_snomed if current_snomed in snomed_options else "",
+                    )
+
+                    row_cols = st.columns([4, 2, 2, 2, 2, 1])
+                    with row_cols[0]:
+                        st.text_input(
+                            f"{role.title()} Action {idx + 1}",
+                            key=text_key,
+                            placeholder="Enter action item",
+                        )
+                    with row_cols[1]:
+                        st.date_input("Due Date", key=due_key)
+                    with row_cols[2]:
+                        st.selectbox(
+                            "Priority",
+                            options=list(ACTION_PRIORITY_OPTIONS),
+                            key=priority_key,
+                        )
+                    with row_cols[3]:
+                        st.text_input("Assignee", key=assignee_key)
+                    with row_cols[4]:
+                        st.selectbox(
+                            "SNOMED",
+                            options=snomed_options,
+                            key=snomed_key,
+                            format_func=lambda value: value if value else "Not linked",
+                        )
+                    with row_cols[5]:
+                        st.markdown("&nbsp;")
+                        if st.button("Remove", key=remove_key):
+                            remove_index = idx
+
+                    action_rows[idx] = {
+                        "action_text": st.session_state.get(text_key, "").strip(),
+                        "due_date": _to_date(st.session_state.get(due_key)).isoformat(),
+                        "priority": st.session_state.get(priority_key, "Medium"),
+                        "assignee": st.session_state.get(assignee_key, "").strip(),
+                        "snomed_code": st.session_state.get(snomed_key, "").strip(),
+                    }
+
+                if remove_index is not None:
+                    action_rows.pop(remove_index)
+                    st.session_state[action_items_key] = action_rows
+                    st.rerun()
+
+                st.session_state[action_items_key] = action_rows
+
 # Action row
 st.markdown("---")
 c1, c2, c3, c4 = st.columns(4)
@@ -738,6 +922,7 @@ if c2.button("Approve All & Export to EMIS"):
             "component_scores": confidence_bundle.get("component_scores", {}),
             "summaries": current_payload.get("summaries", {}),
             "snomed_entities": current_payload.get("snomed", {}).get("entities", []),
+            "role_based_actions": current_payload.get("role_based_actions", {}),
         }
         export_json = json.dumps(export_payload, indent=2)
         export_key = f"{selected_document}_emis_export_json"
