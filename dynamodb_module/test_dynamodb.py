@@ -26,8 +26,16 @@ import logging
 from decimal import Decimal
 from datetime import datetime, timezone
 
-import boto3
 from botocore.exceptions import ClientError
+import boto3
+try:
+    from hipaa_compliance import create_secure_client, create_secure_resource
+except ImportError:
+    def create_secure_client(service_name: str, region_name: str, **kwargs):
+        return boto3.client(service_name, region_name=region_name, **kwargs)
+
+    def create_secure_resource(service_name: str, region_name: str, **kwargs):
+        return boto3.resource(service_name, region_name=region_name, **kwargs)
 
 from config import AWS_REGION, TABLE_NAMES, TTL_ATTRIBUTE
 from ttl_config import compute_ttl_expiry
@@ -41,8 +49,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Shared client and resource ─────────────────────────────────────────────────
-_CLIENT   = boto3.client("dynamodb", region_name=AWS_REGION)
-_RESOURCE = boto3.resource("dynamodb", region_name=AWS_REGION)
+_CLIENT   = create_secure_client("dynamodb", region_name=AWS_REGION)
+_RESOURCE = create_secure_resource("dynamodb", region_name=AWS_REGION)
 
 # ── Utility ────────────────────────────────────────────────────────────────────
 

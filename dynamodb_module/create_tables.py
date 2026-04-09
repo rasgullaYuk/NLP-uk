@@ -21,8 +21,14 @@ import sys
 import time
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
+try:
+    from hipaa_compliance import create_secure_client
+except ImportError:
+    import boto3
+
+    def create_secure_client(service_name: str, region_name: str, **kwargs):
+        return boto3.client(service_name, region_name=region_name, **kwargs)
 
 from config import (
     AWS_REGION,
@@ -179,7 +185,7 @@ def create_all_tables() -> bool:
     Returns:
         True if all tables are ACTIVE and TTL is configured, False otherwise.
     """
-    client  = boto3.client("dynamodb", region_name=AWS_REGION)
+    client  = create_secure_client("dynamodb", region_name=AWS_REGION)
     success = True
 
     logger.info("=== DynamoDB Table Provisioner — start ===")

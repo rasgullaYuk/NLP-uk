@@ -1,13 +1,13 @@
-import boto3
 import json
+from hipaa_compliance import create_secure_client
 
 def setup_sns_fanout(track_a_queue_url, track_b_queue_url):
     """
     Creates an SNS topic and subscribes Track A and Track B SQS queues to it
     for parallel processing.
     """
-    sns_client = boto3.client('sns', region_name='us-east-1')
-    sqs_client = boto3.client('sqs', region_name='us-east-1')
+    sns_client = create_secure_client('sns', region_name='us-east-1')
+    sqs_client = create_secure_client('sqs', region_name='us-east-1')
     
     print("Creating SNS Topic...")
     topic_response = sns_client.create_topic(Name='Clinical_Doc_Parallel_Processing')

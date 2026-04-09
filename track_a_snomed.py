@@ -1,9 +1,14 @@
-import boto3
 import json
 import os
 import time
 import logging
 import math
+from hipaa_compliance import (
+    build_phi_detection_summary,
+    create_secure_client,
+    detect_phi_entities,
+    scrub_text_for_logs,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,8 +39,8 @@ CATEGORY_MAP = {
     "TEST_NAME":         "Investigations",
 }
 
-sqs_client          = boto3.client("sqs",              region_name=AWS_REGION)
-comprehend_medical  = boto3.client("comprehendmedical", region_name=AWS_REGION)
+sqs_client          = create_secure_client("sqs",              region_name=AWS_REGION)
+comprehend_medical  = create_secure_client("comprehendmedical", region_name=AWS_REGION)
 
 
 
@@ -372,12 +377,18 @@ def process_document(file_path):
         if block.get("BlockType") == "LINE" and "Text" in block
     ]
     full_text = " ".join(raw_text_lines)
+    phi_entities = detect_phi_entities(full_text, comprehend_medical_client=comprehend_medical)
+    phi_summary = build_phi_detection_summary(phi_entities)
     text_to_analyze = full_text[:MAX_COMPREHEND_CHARS]
 
     if not text_to_analyze.strip():
         raise ValueError("No text found in Textract output — cannot process.")
 
-    logger.info("Calling Amazon Comprehend Medical InferSNOMEDCT...")
+    logger.info(
+        "Calling Amazon Comprehend Medical InferSNOMEDCT (PHI flagged=%d).",
+        phi_summary["entity_count"],
+    )
+    logger.debug("Masked clinical text preview: %s", scrub_text_for_logs(full_text, phi_entities)[:240])
     print("  Sending text to AWS Comprehend Medical...")
     snomed_response = comprehend_medical.infer_snomedct(Text=text_to_analyze)
 
@@ -427,6 +438,7 @@ def process_document(file_path):
         "unified_confidence_score": unified_confidence,
         "processing_time_seconds": elapsed,
         "comprehend_model_version": snomed_response.get("ModelVersion", "unknown"),
+        "phi_detection":           phi_summary,
     }
 
 

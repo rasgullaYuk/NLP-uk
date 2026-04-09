@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTrackBQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:*:TrackB_Summary_Queue"
+    },
+    {
+      "Sid": "BedrockInvokeOnly",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v1"
+      ]
+    },
+    {
+      "Sid": "DetectPHIForMasking",
+      "Effect": "Allow",
+      "Action": [
+        "comprehendmedical:DetectPHI"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

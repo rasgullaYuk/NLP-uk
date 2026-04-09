@@ -15,7 +15,6 @@ Features:
 - Performance target: <20s per document
 """
 
-import boto3
 import json
 import os
 import re
@@ -26,6 +25,13 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
+from hipaa_compliance import (
+    build_phi_detection_summary,
+    create_secure_client,
+    detect_phi_entities,
+    scrub_json_value,
+    scrub_text_for_logs,
+)
 
 # AWS Configuration
 AWS_REGION = "us-east-1"
@@ -259,7 +265,7 @@ class TitanEmbeddings:
     """
 
     def __init__(self):
-        self.bedrock = boto3.client(
+        self.bedrock = create_secure_client(
             'bedrock-runtime',
             region_name=AWS_REGION
         )
@@ -486,7 +492,7 @@ Be thorough with medication details. Flag any potential issues."""
     }
 
     def __init__(self):
-        self.bedrock = boto3.client(
+        self.bedrock = create_secure_client(
             'bedrock-runtime',
             region_name=AWS_REGION
         )
@@ -763,7 +769,8 @@ class TrackBPipeline:
     def process_document(self,
                          document_text: str,
                          document_id: str,
-                         roles: List[SummaryRole] = None) -> Dict[str, SummaryOutput]:
+                         roles: List[SummaryRole] = None,
+                         phi_entities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, SummaryOutput]:
         """
         Processes a document through the full Track B pipeline.
 
@@ -869,29 +876,53 @@ class TrackBPipeline:
         print(f"  Total processing time: {total_time:.2f}s")
 
         # 7. Save results
-        self._save_results(document_id, results)
+        self._save_results(document_id, results, phi_entities=phi_entities or [])
 
         return results
 
-    def _save_results(self, document_id: str, results: Dict[str, SummaryOutput]):
+    def _save_results(self, document_id: str, results: Dict[str, SummaryOutput], phi_entities: List[Dict[str, Any]]):
         """Saves summary results to files."""
+        phi_summary = build_phi_detection_summary(phi_entities)
         for role, output in results.items():
+            role_lower = role.lower()
+            apply_masking = role_lower != SummaryRole.CLINICIAN.value
+            summary_text = (
+                scrub_text_for_logs(output.summary, phi_entities)
+                if apply_masking else output.summary
+            )
+            key_points = (
+                [scrub_text_for_logs(point, phi_entities) for point in output.key_points]
+                if apply_masking else output.key_points
+            )
+            medications = (
+                scrub_json_value(output.medications, phi_entities)
+                if apply_masking else output.medications
+            )
+            diagnoses = (
+                [scrub_text_for_logs(dx, phi_entities) for dx in output.diagnoses]
+                if apply_masking else output.diagnoses
+            )
+            follow_up_actions = (
+                [scrub_text_for_logs(action, phi_entities) for action in output.follow_up_actions]
+                if apply_masking else output.follow_up_actions
+            )
+
             # Save as text file (for backward compatibility)
             txt_path = os.path.join(SUMMARY_OUTPUT_DIR, f"{document_id}_{role}_summary.txt")
             with open(txt_path, 'w') as f:
                 f.write(f"=== {role.upper()} SUMMARY ===\n\n")
-                f.write(output.summary)
+                f.write(summary_text)
                 f.write("\n\n=== KEY POINTS ===\n")
-                for point in output.key_points:
+                for point in key_points:
                     f.write(f"- {point}\n")
                 f.write("\n=== MEDICATIONS ===\n")
-                for med in output.medications:
+                for med in medications:
                     f.write(f"- {med.get('name', 'Unknown')}: {med.get('dosage', '')} {med.get('frequency', '')}\n")
                 f.write("\n=== DIAGNOSES ===\n")
-                for dx in output.diagnoses:
+                for dx in diagnoses:
                     f.write(f"- {dx}\n")
                 f.write("\n=== FOLLOW-UP ACTIONS ===\n")
-                for action in output.follow_up_actions:
+                for action in follow_up_actions:
                     f.write(f"- {action}\n")
 
             # Save as JSON (full structured output)
@@ -900,16 +931,18 @@ class TrackBPipeline:
                 json.dump({
                     'document_id': output.document_id,
                     'role': output.role.value,
-                    'summary': output.summary,
-                    'key_points': output.key_points,
-                    'medications': output.medications,
-                    'diagnoses': output.diagnoses,
-                    'follow_up_actions': output.follow_up_actions,
+                    'summary': summary_text,
+                    'key_points': key_points,
+                    'medications': medications,
+                    'diagnoses': diagnoses,
+                    'follow_up_actions': follow_up_actions,
                     'confidence_score': output.confidence_score,
                     'validation_passed': output.validation_passed,
                     'validation_errors': output.validation_errors,
                     'generation_time_ms': output.generation_time_ms,
-                    'generated_at': datetime.utcnow().isoformat() + 'Z'
+                    'generated_at': datetime.utcnow().isoformat() + 'Z',
+                    'phi_detection': phi_summary,
+                    'phi_masking_applied': apply_masking,
                 }, f, indent=2)
 
         print(f"  Results saved to {SUMMARY_OUTPUT_DIR}/")
@@ -973,8 +1006,12 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
                     delete_from_sqs(queue_url, message['ReceiptHandle'])
                     continue
 
+                phi_entities = detect_phi_entities(document_text)
+                phi_summary = build_phi_detection_summary(phi_entities)
+                print(f"PHI entities flagged for {document_id}: {phi_summary['entity_count']}")
+
                 # Process document
-                results = pipeline.process_document(document_text, document_id)
+                results = pipeline.process_document(document_text, document_id, phi_entities=phi_entities)
 
                 # Delete processed message
                 delete_from_sqs(queue_url, message['ReceiptHandle'])

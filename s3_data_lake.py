@@ -12,7 +12,6 @@ Features:
 - SageMaker integration for model fine-tuning
 """
 
-import boto3
 import json
 import os
 import re
@@ -20,6 +19,13 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from botocore.exceptions import ClientError
+from hipaa_compliance import (
+    create_secure_client,
+    create_secure_resource,
+    detect_phi_entities,
+    mask_text_by_entities,
+    scrub_json_value,
+)
 
 # Configuration
 AWS_REGION = "us-east-1"
@@ -43,8 +49,12 @@ class S3DataLake:
 
     def __init__(self, bucket_name: str = DATA_LAKE_BUCKET):
         self.bucket_name = bucket_name
-        self.s3_client = boto3.client('s3', region_name=AWS_REGION)
-        self.s3_resource = boto3.resource('s3', region_name=AWS_REGION)
+        self.s3_client = create_secure_client('s3', region_name=AWS_REGION)
+        self.s3_resource = create_secure_resource('s3', region_name=AWS_REGION)
+
+    def _put_object_encrypted(self, **kwargs):
+        kwargs.setdefault("ServerSideEncryption", "AES256")
+        return self.s3_client.put_object(**kwargs)
 
     def create_bucket(self) -> bool:
         """
@@ -75,6 +85,9 @@ class S3DataLake:
                     # Enable versioning
                     self._enable_versioning()
 
+                    # Enforce default encryption (SSE-S3)
+                    self._enable_default_encryption()
+
                     # Set lifecycle policy
                     self._set_lifecycle_policy()
 
@@ -99,6 +112,24 @@ class S3DataLake:
             print("Versioning enabled.")
         except ClientError as e:
             print(f"Error enabling versioning: {e}")
+
+    def _enable_default_encryption(self):
+        """Enables default SSE-S3 encryption for all bucket objects."""
+        try:
+            self.s3_client.put_bucket_encryption(
+                Bucket=self.bucket_name,
+                ServerSideEncryptionConfiguration={
+                    "Rules": [{
+                        "ApplyServerSideEncryptionByDefault": {
+                            "SSEAlgorithm": "AES256"
+                        },
+                        "BucketKeyEnabled": False
+                    }]
+                }
+            )
+            print("Default bucket encryption enabled (SSE-S3).")
+        except ClientError as e:
+            print(f"Error enabling default encryption: {e}")
 
     def _set_lifecycle_policy(self):
         """Sets lifecycle policy for data retention."""
@@ -147,7 +178,7 @@ class S3DataLake:
         """Creates the folder structure in S3."""
         for path in DATASET_PATHS.values():
             try:
-                self.s3_client.put_object(
+                self._put_object_encrypted(
                     Bucket=self.bucket_name,
                     Key=path,
                     Body=''
@@ -184,7 +215,7 @@ class S3DataLake:
             if metadata:
                 extra_args['Metadata'] = {k: str(v) for k, v in metadata.items()}
 
-            self.s3_client.put_object(
+            self._put_object_encrypted(
                 Bucket=self.bucket_name,
                 Key=key,
                 Body=data,
@@ -310,7 +341,7 @@ class DynamoDBToS3Exporter:
 
     def __init__(self, data_lake: S3DataLake):
         self.data_lake = data_lake
-        self.dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        self.dynamodb = create_secure_resource('dynamodb', region_name=AWS_REGION)
         self.table = self.dynamodb.Table(DYNAMODB_AUDIT_TABLE)
         self.anonymizer = PIIAnonymizer()
 
@@ -427,12 +458,15 @@ class DynamoDBToS3Exporter:
             # Anonymize if requested
             if anonymize:
                 if 'summary' in before_state:
-                    before_state['summary'], _ = self.anonymizer.anonymize(before_state['summary'])
+                    entities = detect_phi_entities(before_state['summary'])
+                    before_state['summary'] = mask_text_by_entities(before_state['summary'], entities)
                 if 'summary' in after_state:
-                    after_state['summary'], _ = self.anonymizer.anonymize(after_state['summary'])
+                    entities = detect_phi_entities(after_state['summary'])
+                    after_state['summary'] = mask_text_by_entities(after_state['summary'], entities)
 
                 # Hash user_id for privacy
                 item['user_id'] = self.anonymizer.hash_identifier(item.get('user_id', ''))
+                metadata = scrub_json_value(metadata)
 
             record = {
                 'audit_id': item.get('audit_id'),
@@ -572,7 +606,7 @@ class DynamoDBToS3Exporter:
         log_data = json.dumps(log_entry, indent=2).encode('utf-8')
 
         try:
-            self.data_lake.s3_client.put_object(
+            self.data_lake._put_object_encrypted(
                 Bucket=self.data_lake.bucket_name,
                 Key=f"{DATASET_PATHS['exports']}logs/{log_filename}",
                 Body=log_data
@@ -588,7 +622,7 @@ class SageMakerIntegration:
 
     def __init__(self, data_lake: S3DataLake):
         self.data_lake = data_lake
-        self.sagemaker = boto3.client('sagemaker', region_name=AWS_REGION)
+        self.sagemaker = create_secure_client('sagemaker', region_name=AWS_REGION)
 
     def get_training_data_uri(self, model_type: str) -> str:
         """

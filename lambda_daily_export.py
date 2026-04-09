@@ -27,6 +27,7 @@ from s3_data_lake import (
     DATA_LAKE_BUCKET,
     DYNAMODB_AUDIT_TABLE
 )
+from hipaa_compliance import create_secure_client
 
 
 def lambda_handler(event, context):
@@ -102,10 +103,8 @@ def create_eventbridge_rule():
     Run this once to set up the schedule:
         python -c "from lambda_daily_export import create_eventbridge_rule; create_eventbridge_rule()"
     """
-    import boto3
-
-    events_client = boto3.client('events', region_name='us-east-1')
-    lambda_client = boto3.client('lambda', region_name='us-east-1')
+    events_client = create_secure_client('events', region_name='us-east-1')
+    lambda_client = create_secure_client('lambda', region_name='us-east-1')
 
     rule_name = 'DailyFeedbackExportRule'
     lambda_function_name = 'clinical-nlp-daily-export'

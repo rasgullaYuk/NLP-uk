@@ -31,9 +31,15 @@ import socket
 import time
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
+try:
+    from hipaa_compliance import create_secure_client
+except ImportError:
+    import boto3
+
+    def create_secure_client(service_name: str, region_name: str, **kwargs):
+        return boto3.client(service_name, region_name=region_name, **kwargs)
 
 try:
     from .config import (
@@ -69,7 +75,7 @@ def _get_client() -> Any:
     """Lazy-initialise the Bedrock Runtime boto3 client."""
     global _bedrock_runtime
     if _bedrock_runtime is None:
-        _bedrock_runtime = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+        _bedrock_runtime = create_secure_client("bedrock-runtime", region_name=AWS_REGION)
     return _bedrock_runtime
 
 

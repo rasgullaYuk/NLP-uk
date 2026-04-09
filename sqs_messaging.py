@@ -1,13 +1,13 @@
-import boto3
 import json
 import time
 import logging
+from hipaa_compliance import create_secure_client, scrub_json_value
 
 logger = logging.getLogger("track_a.sqs")
 
 AWS_REGION = "us-east-1"
 
-sqs_client = boto3.client("sqs", region_name=AWS_REGION)
+sqs_client = create_secure_client("sqs", region_name=AWS_REGION)
 
 
 def send_to_sqs(queue_url, payload, max_retries=3):
@@ -17,9 +17,10 @@ def send_to_sqs(queue_url, payload, max_retries=3):
     """
     for attempt in range(1, max_retries + 1):
         try:
+            safe_payload = scrub_json_value(payload)
             response = sqs_client.send_message(
                 QueueUrl=queue_url,
-                MessageBody=json.dumps(payload)
+                MessageBody=json.dumps(safe_payload)
             )
             logger.info("Message sent. MessageId: %s", response["MessageId"])
             print(f"Message successfully sent. MessageId: {response['MessageId']}")
@@ -41,7 +42,7 @@ def send_to_dlq(dlq_url, original_payload, error_reason, attempt_count):
     Called after all retries are exhausted — ensures zero message loss.
     """
     dlq_payload = {
-        "original_payload": original_payload,
+        "original_payload": scrub_json_value(original_payload),
         "error_reason": str(error_reason),
         "attempt_count": attempt_count,
         "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

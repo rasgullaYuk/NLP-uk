@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TextractAnalyzeOnly",
+      "Effect": "Allow",
+      "Action": [
+        "textract:AnalyzeDocument"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DetectPHIForExtractedText",
+      "Effect": "Allow",
+      "Action": [
+        "comprehendmedical:DetectPHI"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
