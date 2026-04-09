@@ -4,12 +4,15 @@ import tempfile
 import unittest
 
 from review_interface_utils import (
+    ACTION_PRIORITY_OPTIONS,
     compute_confidence_bundle,
     confidence_band,
     discover_document_assets,
     infer_document_id,
     infer_summary_role_from_filename,
     load_snomed_entities,
+    normalize_action_items,
+    serialize_action_items,
 )
 
 
@@ -199,6 +202,37 @@ class TestReviewInterfaceUtils(unittest.TestCase):
         self.assertEqual(confidence_band(0.9), "high")
         self.assertEqual(confidence_band(0.7), "medium")
         self.assertEqual(confidence_band(0.4), "low")
+
+    def test_action_item_normalization_and_serialization(self):
+        raw_actions = [
+            "Schedule blood pressure follow-up",
+            {
+                "action_text": "Review medication adherence",
+                "priority": "high",
+                "assignee": "Clinician",
+                "snomed_code": "38341003",
+                "due_date": "2026-04-15",
+            },
+            {
+                "text": "Educate patient on diet",
+                "priority": "urgent",  # invalid -> defaults to Medium
+                "assignee": "Nurse",
+                "snomed_code": "27113001",
+                "due_date": "bad-date",
+            },
+            {"action_text": "", "assignee": "", "snomed_code": ""},  # dropped on serialize
+        ]
+
+        normalized = normalize_action_items(raw_actions, default_assignee="System")
+        self.assertEqual(len(normalized), 3)
+        self.assertIn(normalized[0]["priority"], ACTION_PRIORITY_OPTIONS)
+        self.assertEqual(normalized[1]["priority"], "High")
+        self.assertEqual(normalized[2]["priority"], "Medium")
+
+        serialized = serialize_action_items(normalized + [{"action_text": "", "assignee": "", "snomed_code": ""}])
+        self.assertEqual(len(serialized), 3)
+        self.assertEqual(serialized[1]["snomed_code"], "38341003")
+        self.assertTrue(serialized[0]["due_date"])
 
 
 if __name__ == "__main__":
