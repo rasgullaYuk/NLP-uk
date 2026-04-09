@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, Tuple
 
 from audit_dynamodb import get_audit_logger
+from cloudwatch_monitoring import CloudWatchMonitoringManager, infer_document_type
 from hipaa_compliance import create_secure_client
 
 DEFAULT_THRESHOLD = 0.85
@@ -33,6 +34,17 @@ DEFAULT_WEIGHTS = {
 
 HIGH_CONFIDENCE_QUEUE = "Confidence_High_Bypass_Queue"
 LOW_CONFIDENCE_QUEUE = "Confidence_Low_Review_Queue"
+_monitor = None
+
+
+def _get_monitor():
+    global _monitor
+    if _monitor is None:
+        try:
+            _monitor = CloudWatchMonitoringManager()
+        except Exception:
+            _monitor = False
+    return _monitor if _monitor is not False else None
 
 
 def _to_unit_interval(value: Any, default: float = 0.0) -> float:
@@ -239,6 +251,18 @@ def lambda_handler(event, context):
             calculation_latency_ms=calculation_latency_ms,
         )
         log_routing_audit(document_id, route_result)
+        monitor = _get_monitor()
+        if monitor:
+            try:
+                monitor.publish_confidence_routing(
+                    document_id=document_id,
+                    final_confidence=final_score,
+                    route=route_result["route"],
+                    latency_ms=calculation_latency_ms,
+                    document_type=infer_document_type(document_id),
+                )
+            except Exception:
+                pass
 
         return {
             "statusCode": 200,
@@ -257,6 +281,17 @@ def lambda_handler(event, context):
             ),
         }
     except Exception as exc:
+        monitor = _get_monitor()
+        if monitor:
+            try:
+                monitor.put_metric(
+                    metric_name="AggregationErrorRate",
+                    value=100.0,
+                    unit="Percent",
+                    dimensions=[{"Name": "Stage", "Value": "ConfidenceAggregation"}],
+                )
+            except Exception:
+                pass
         return {
             "statusCode": 500,
             "body": json.dumps(
