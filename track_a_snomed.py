@@ -4,6 +4,7 @@ import time
 import logging
 import math
 import re
+from cloudwatch_monitoring import CloudWatchMonitoringManager, infer_document_type
 from hipaa_compliance import (
     build_phi_detection_summary,
     create_secure_client,
@@ -47,6 +48,10 @@ CATEGORY_MAP = {
 
 sqs_client          = create_secure_client("sqs",              region_name=AWS_REGION)
 comprehend_medical  = create_secure_client("comprehendmedical", region_name=AWS_REGION)
+try:
+    cloudwatch_monitor = CloudWatchMonitoringManager()
+except Exception:
+    cloudwatch_monitor = None
 
 
 
@@ -461,6 +466,13 @@ def process_document(file_path):
     categories = categorize_entities(enriched_entities, full_text)
 
     unified_confidence = aggregate_confidence(enriched_entities)
+    mapped_entities = len(
+        [
+            entity
+            for entity in enriched_entities
+            if entity.get("snomed_result", {}).get("snomed_code") not in {"", "NOT_MAPPED"}
+        ]
+    )
 
     elapsed = round(time.time() - t_start, 3)
 
@@ -471,6 +483,19 @@ def process_document(file_path):
         )
     else:
         logger.info("Performance OK: %.2fs < %ds.", elapsed, PERF_TARGET_SECONDS)
+
+    if cloudwatch_monitor:
+        try:
+            cloudwatch_monitor.publish_snomed_mapping_result(
+                document_id=os.path.basename(file_path).replace("_textract.json", ""),
+                total_entities=len(enriched_entities),
+                mapped_entities=mapped_entities,
+                fallback_count=fallback_count,
+                latency_seconds=elapsed,
+                document_type=infer_document_type(file_path),
+            )
+        except Exception as monitor_error:
+            logger.debug("CloudWatch metric publish failed: %s", monitor_error)
 
     return {
         "source_file":             file_path,

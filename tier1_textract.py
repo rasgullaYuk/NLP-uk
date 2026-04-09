@@ -1,6 +1,8 @@
 import json
 import os
 import glob
+import time
+from cloudwatch_monitoring import CloudWatchMonitoringManager, infer_document_type
 from hipaa_compliance import (
     build_phi_detection_summary,
     create_secure_client,
@@ -18,6 +20,10 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
 
     # Initialize the Textract client (it automatically uses your new keys!)
     textract_client = create_secure_client('textract', region_name='us-east-1')
+    try:
+        monitor = CloudWatchMonitoringManager()
+    except Exception:
+        monitor = None
 
     # Find all the CLEANED images in your temp folder
     cleaned_images = glob.glob(os.path.join(input_dir, "*_CLEANED.*"))
@@ -37,6 +43,7 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
 
     for img_path in cleaned_images:
         print(f"\nProcessing: {img_path}")
+        page_start = time.perf_counter()
         
         with open(img_path, 'rb') as document:
             image_bytes = document.read()
@@ -71,9 +78,30 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
                 f"SUCCESS: Saved extracted data to {output_file} | "
                 f"PHI flagged: {response['PhiDetection']['entity_count']}"
             )
+            if monitor:
+                try:
+                    monitor.publish_extraction_result(
+                        document_id=base_name,
+                        success=True,
+                        latency_seconds=(time.perf_counter() - page_start),
+                        document_type=infer_document_type(base_name),
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             print(f"FAILED to process {img_path}. Error: {e}")
+            base_name = os.path.basename(img_path).split('.')[0]
+            if monitor:
+                try:
+                    monitor.publish_extraction_result(
+                        document_id=base_name,
+                        success=False,
+                        latency_seconds=(time.perf_counter() - page_start),
+                        document_type=infer_document_type(base_name),
+                    )
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
     process_documents_with_textract()
