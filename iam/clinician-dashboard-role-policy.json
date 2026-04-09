@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AuditTableWriteReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:GetItem",
+        "dynamodb:DescribeTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:*:table/ClinicalDocumentAuditLog",
+        "arn:aws:dynamodb:us-east-1:*:table/ClinicalDocumentAuditLog/index/*"
+      ]
+    }
+  ]
+}

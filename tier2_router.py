@@ -1,7 +1,7 @@
-import boto3
 import json
 import os
 import glob
+from hipaa_compliance import create_secure_client
 
 def calculate_document_confidence(textract_data):
     """
@@ -54,7 +54,7 @@ def setup_queues_and_route_data(input_dir="textract_outputs", confidence_thresho
     - Low confidence (< 90%): Route to Tier 2 LayoutLMv3 for refinement
     """
     # Initialize the SQS client using your keys
-    sqs = boto3.client('sqs', region_name='us-east-1')
+    sqs = create_secure_client('sqs', region_name='us-east-1')
 
     print("--- [Step 1: Setting up Conveyor Belts (SQS Queues)] ---")
 

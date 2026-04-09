@@ -15,15 +15,21 @@ from __future__ import annotations
 import logging
 import time
 
-import boto3
 from botocore.exceptions import ClientError
+try:
+    from hipaa_compliance import create_secure_client
+except ImportError:
+    import boto3
+
+    def create_secure_client(service_name: str, region_name: str, **kwargs):
+        return boto3.client(service_name, region_name=region_name, **kwargs)
 
 from config import AWS_REGION, TABLE_NAMES, TTL_ATTRIBUTE
 
 logger = logging.getLogger(__name__)
 
 
-def enable_ttl(client: boto3.client = None) -> bool:
+def enable_ttl(client=None) -> bool:
     """
     Enable TTL on the User_Sessions table using the ttl_expiry attribute.
 
@@ -40,7 +46,7 @@ def enable_ttl(client: boto3.client = None) -> bool:
         False if an unrecoverable error occurred.
     """
     if client is None:
-        client = boto3.client("dynamodb", region_name=AWS_REGION)
+        client = create_secure_client("dynamodb", region_name=AWS_REGION)
 
     table_name = TABLE_NAMES["user_sessions"]
 
@@ -77,7 +83,7 @@ def enable_ttl(client: boto3.client = None) -> bool:
         return False
 
 
-def verify_ttl(client: boto3.client = None) -> dict | None:
+def verify_ttl(client=None) -> dict | None:
     """
     Describe the current TTL configuration for the User_Sessions table.
 
@@ -89,7 +95,7 @@ def verify_ttl(client: boto3.client = None) -> dict | None:
         Example: {"TimeToLiveStatus": "ENABLED", "AttributeName": "ttl_expiry"}
     """
     if client is None:
-        client = boto3.client("dynamodb", region_name=AWS_REGION)
+        client = create_secure_client("dynamodb", region_name=AWS_REGION)
 
     table_name = TABLE_NAMES["user_sessions"]
 

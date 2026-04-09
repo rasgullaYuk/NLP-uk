@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTrackAQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:*:TrackA_Medical_Queue"
+    },
+    {
+      "Sid": "SendTrackADLQ",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:*:TrackA_Medical_DLQ"
+    },
+    {
+      "Sid": "ComprehendMedicalOnly",
+      "Effect": "Allow",
+      "Action": [
+        "comprehendmedical:DetectPHI",
+        "comprehendmedical:InferSNOMEDCT"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

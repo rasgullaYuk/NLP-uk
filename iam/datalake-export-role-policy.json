@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadAuditDynamoDB",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Scan",
+        "dynamodb:Query",
+        "dynamodb:DescribeTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:*:table/ClinicalDocumentAuditLog",
+        "arn:aws:dynamodb:us-east-1:*:table/ClinicalDocs_AuditLogs",
+        "arn:aws:dynamodb:us-east-1:*:table/ClinicalDocs_AuditLogs/index/*"
+      ]
+    },
+    {
+      "Sid": "WriteEncryptedS3Exports",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketEncryption",
+        "s3:PutBucketEncryption",
+        "s3:PutBucketVersioning",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::clinical-nlp-data-lake",
+        "arn:aws:s3:::clinical-nlp-data-lake/*"
+      ]
+    },
+    {
+      "Sid": "AllowSageMakerConfigRead",
+      "Effect": "Allow",
+      "Action": [
+        "sagemaker:DescribeTrainingJob"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

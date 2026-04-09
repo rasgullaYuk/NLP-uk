@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManagePipelineQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:SendMessage"
+      ],
+      "Resource": [
+        "arn:aws:sqs:us-east-1:*:TrackA_Medical_Queue",
+        "arn:aws:sqs:us-east-1:*:TrackB_Summary_Queue",
+        "arn:aws:sqs:us-east-1:*:Tier2_LayoutLM_Queue",
+        "arn:aws:sqs:us-east-1:*:TrackA_Medical_DLQ"
+      ]
+    },
+    {
+      "Sid": "ManageSNSFanout",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:Subscribe"
+      ],
+      "Resource": "arn:aws:sns:us-east-1:*:Clinical_Doc_Parallel_Processing"
+    }
+  ]
+}

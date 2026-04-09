@@ -6,12 +6,12 @@ Captures before/after states for every user edit, tracks user identity,
 timestamps, and changes to SNOMED codes, summaries, and actions.
 """
 
-import boto3
 import json
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from botocore.exceptions import ClientError
+from hipaa_compliance import create_secure_resource, scrub_json_value
 
 # DynamoDB Configuration
 AUDIT_TABLE_NAME = "ClinicalDocumentAuditLog"
@@ -44,7 +44,7 @@ class AuditLogger:
 
     def __init__(self):
         if self._dynamodb is None:
-            self._dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            self._dynamodb = create_secure_resource('dynamodb', region_name=AWS_REGION)
             self._ensure_table_exists()
 
     def _ensure_table_exists(self):
@@ -103,7 +103,8 @@ class AuditLogger:
                 ProvisionedThroughput={
                     'ReadCapacityUnits': 5,
                     'WriteCapacityUnits': 5
-                }
+                },
+                SSESpecification={'Enabled': True}
             )
 
             # Wait for table to be created
@@ -149,9 +150,9 @@ class AuditLogger:
             'user_id': user_id,
             'timestamp': timestamp,
             'change_type': change_type,
-            'before_state': json.dumps(before_state) if before_state else None,
-            'after_state': json.dumps(after_state) if after_state else None,
-            'metadata': json.dumps(metadata) if metadata else None
+            'before_state': json.dumps(scrub_json_value(before_state)) if before_state else None,
+            'after_state': json.dumps(scrub_json_value(after_state)) if after_state else None,
+            'metadata': json.dumps(scrub_json_value(metadata)) if metadata else None
         }
 
         try:

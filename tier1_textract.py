@@ -1,7 +1,11 @@
-import boto3
 import json
 import os
 import glob
+from hipaa_compliance import (
+    build_phi_detection_summary,
+    create_secure_client,
+    detect_phi_entities,
+)
 
 def process_documents_with_textract(input_dir="temp_pages", output_dir="textract_outputs"):
     """
@@ -13,7 +17,7 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
         os.makedirs(output_dir)
 
     # Initialize the Textract client (it automatically uses your new keys!)
-    textract_client = boto3.client('textract', region_name='us-east-1')
+    textract_client = create_secure_client('textract', region_name='us-east-1')
 
     # Find all the CLEANED images in your temp folder
     cleaned_images = glob.glob(os.path.join(input_dir, "*_CLEANED.*"))
@@ -45,6 +49,16 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
                 QueriesConfig={'Queries': queries}
             )
 
+            # Detect PHI in extracted clinical text and attach compliance metadata
+            text_lines = [
+                block.get("Text", "")
+                for block in response.get("Blocks", [])
+                if block.get("BlockType") == "LINE" and block.get("Text")
+            ]
+            extracted_text = "\n".join(text_lines)
+            phi_entities = detect_phi_entities(extracted_text)
+            response["PhiDetection"] = build_phi_detection_summary(phi_entities)
+
             # Create a nice filename for the output
             base_name = os.path.basename(img_path).split('.')[0]
             output_file = os.path.join(output_dir, f"{base_name}_textract.json")
@@ -53,7 +67,10 @@ def process_documents_with_textract(input_dir="temp_pages", output_dir="textract
             with open(output_file, 'w') as f:
                 json.dump(response, f, indent=4)
                 
-            print(f"SUCCESS: Saved extracted data to {output_file}")
+            print(
+                f"SUCCESS: Saved extracted data to {output_file} | "
+                f"PHI flagged: {response['PhiDetection']['entity_count']}"
+            )
 
         except Exception as e:
             print(f"FAILED to process {img_path}. Error: {e}")
