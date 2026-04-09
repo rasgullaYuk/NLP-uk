@@ -63,6 +63,34 @@ else:
             with open(os.path.join(SUMMARY_DIR, summary_file), "r") as f:
                 summary_text = f.read()
 
+            # Load structured Track B JSON (clinician role preferred) for validation flags
+            summary_json_file = next(
+                (f for f in os.listdir(SUMMARY_DIR)
+                 if selected_base in f and f.endswith("_clinician_summary.json")),
+                None
+            )
+            if not summary_json_file:
+                summary_json_file = next(
+                    (f for f in os.listdir(SUMMARY_DIR)
+                     if selected_base in f and f.endswith("_summary.json")),
+                    None
+                )
+            summary_meta = {}
+            if summary_json_file:
+                try:
+                    with open(os.path.join(SUMMARY_DIR, summary_json_file), "r", encoding="utf-8") as jf:
+                        summary_meta = json.load(jf)
+                except Exception as e:
+                    st.warning(f"Could not load summary metadata: {e}")
+
+            if summary_meta.get("ocr_deviation_flag"):
+                st.warning(
+                    f"⚠ OCR Deviation Guard triggered | "
+                    f"Score: {summary_meta.get('ocr_deviation_score', 0):.3f}"
+                )
+                with st.expander("View OCR deviation details"):
+                    st.json(summary_meta.get("ocr_deviation_details", []))
+
             # Store original for comparison
             if f"original_summary_{selected_base}" not in st.session_state:
                 st.session_state[f"original_summary_{selected_base}"] = summary_text

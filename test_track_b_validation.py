@@ -69,6 +69,45 @@ class TestTrackBValidation(unittest.TestCase):
         report = self.engine.validate(payload, self.source_text)
         self.assertGreater(report["hallucination_score"], 0.25)
 
+    def test_ocr_deviation_guard_flags_terms_deviating_from_both_ocr_sources(self):
+        summary_output = {
+            "summary": "Patient has zebra syndrome and was prescribed Xenodrug 999 mg with alien catheterization.",
+            "key_points": ["Xenodrug 999 mg daily"],
+            "medications": [{"name": "Xenodrug", "dosage": "999 mg", "frequency": "daily", "instructions": ""}],
+            "diagnoses": ["zebra syndrome"],
+            "follow_up_actions": ["urgent consult"],
+            "confidence_score": 0.7,
+        }
+        textract_text = "Patient has hypertension and takes Metformin 1000 mg."
+        layout_text = "Diagnosis: hypertension. Medication: lisinopril 20 mg."
+        guard = self.engine.compute_ocr_deviation_guard(
+            summary_output=summary_output,
+            textract_source_text=textract_text,
+            layoutlm_source_text=layout_text,
+            deviation_threshold=0.30,
+        )
+        self.assertTrue(guard["flagged_for_review"])
+        self.assertGreater(guard["deviation_score"], 0.30)
+
+    def test_ocr_deviation_guard_passes_when_terms_match_sources(self):
+        summary_output = {
+            "summary": "Patient with hypertension on Metformin 1000 mg.",
+            "key_points": ["Continue metformin"],
+            "medications": [{"name": "Metformin", "dosage": "1000 mg", "frequency": "daily", "instructions": ""}],
+            "diagnoses": ["hypertension"],
+            "follow_up_actions": ["follow-up"],
+            "confidence_score": 0.9,
+        }
+        source = "Patient diagnosed with hypertension. Current medications: Metformin 1000 mg."
+        guard = self.engine.compute_ocr_deviation_guard(
+            summary_output=summary_output,
+            textract_source_text=source,
+            layoutlm_source_text=source,
+            deviation_threshold=0.30,
+        )
+        self.assertFalse(guard["flagged_for_review"])
+        self.assertLessEqual(guard["deviation_score"], 0.30)
+
 
 if __name__ == "__main__":
     unittest.main()

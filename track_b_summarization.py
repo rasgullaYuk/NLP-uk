@@ -88,6 +88,9 @@ class SummaryOutput:
     validation_errors: List[str]
     validation_confidence_score: float
     hallucination_score: float
+    ocr_deviation_flag: bool
+    ocr_deviation_score: float
+    ocr_deviation_details: List[Dict[str, Any]]
     validation_audit_log: List[Dict[str, Any]]
     auto_corrections: List[str]
     generation_time_ms: int
@@ -628,6 +631,20 @@ class SummaryValidator:
     def get_last_report(self) -> Dict[str, Any]:
         return self.last_report
 
+    def compute_ocr_deviation_guard(
+        self,
+        summary_output: Dict[str, Any],
+        textract_source_text: str,
+        layoutlm_source_text: str,
+        deviation_threshold: float = 0.30,
+    ) -> Dict[str, Any]:
+        return self.engine.compute_ocr_deviation_guard(
+            summary_output=summary_output,
+            textract_source_text=textract_source_text,
+            layoutlm_source_text=layoutlm_source_text,
+            deviation_threshold=deviation_threshold,
+        )
+
 
 class TrackBPipeline:
     """
@@ -648,7 +665,9 @@ class TrackBPipeline:
                          document_text: str,
                          document_id: str,
                          roles: List[SummaryRole] = None,
-                         phi_entities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, SummaryOutput]:
+                         phi_entities: Optional[List[Dict[str, Any]]] = None,
+                         textract_source_text: Optional[str] = None,
+                         layoutlm_source_text: Optional[str] = None) -> Dict[str, SummaryOutput]:
         """
         Processes a document through the full Track B pipeline.
 
@@ -715,6 +734,13 @@ class TrackBPipeline:
                 hallucination_score = self.validator.calculate_hallucination_score(
                     corrected_summary, document_text
                 )
+                ocr_deviation = self.validator.compute_ocr_deviation_guard(
+                    summary_output=corrected_summary,
+                    textract_source_text=textract_source_text or document_text,
+                    layoutlm_source_text=layoutlm_source_text or textract_source_text or document_text,
+                    deviation_threshold=0.30,
+                )
+                combined_audit_log = list(validation_report.get('audit_log', [])) + list(ocr_deviation.get('audit_checks', []))
 
                 generation_time = int((time.time() - role_start) * 1000)
 
@@ -731,13 +757,18 @@ class TrackBPipeline:
                     validation_errors=validation_errors,
                     validation_confidence_score=validation_report.get('validation_confidence_score', 0.0),
                     hallucination_score=hallucination_score,
-                    validation_audit_log=validation_report.get('audit_log', []),
+                    ocr_deviation_flag=ocr_deviation.get('flagged_for_review', False),
+                    ocr_deviation_score=ocr_deviation.get('deviation_score', 0.0),
+                    ocr_deviation_details=ocr_deviation.get('critical_term_results', []),
+                    validation_audit_log=combined_audit_log,
                     auto_corrections=validation_report.get('auto_corrections', []),
                     generation_time_ms=generation_time
                 )
 
                 print(f"    Validation: {'PASSED' if is_valid else 'FAILED'}")
                 print(f"    Hallucination score: {hallucination_score:.3f}")
+                print(f"    OCR deviation score: {ocr_deviation.get('deviation_score', 0.0):.3f} | "
+                      f"Flagged: {ocr_deviation.get('flagged_for_review', False)}")
                 print(f"    Time: {generation_time}ms")
 
             except Exception as e:
@@ -755,6 +786,9 @@ class TrackBPipeline:
                     validation_errors=[str(e)],
                     validation_confidence_score=0.0,
                     hallucination_score=1.0,
+                    ocr_deviation_flag=True,
+                    ocr_deviation_score=1.0,
+                    ocr_deviation_details=[],
                     validation_audit_log=[],
                     auto_corrections=[],
                     generation_time_ms=0
@@ -829,6 +863,9 @@ class TrackBPipeline:
                     'validation_errors': output.validation_errors,
                     'validation_confidence_score': output.validation_confidence_score,
                     'hallucination_score': output.hallucination_score,
+                    'ocr_deviation_flag': output.ocr_deviation_flag,
+                    'ocr_deviation_score': output.ocr_deviation_score,
+                    'ocr_deviation_details': output.ocr_deviation_details,
                     'validation_audit_log': output.validation_audit_log,
                     'auto_corrections': output.auto_corrections,
                     'generation_time_ms': output.generation_time_ms,
@@ -849,6 +886,7 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
     """
     from sqs_messaging import receive_from_sqs, delete_from_sqs
     from sqs_setup import get_queue_url
+    from audit_dynamodb import get_audit_logger
 
     print("=" * 60)
     print("TRACK B: RAG-Enabled Summarization Pipeline")
@@ -860,6 +898,13 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
         return
 
     pipeline = TrackBPipeline()
+    audit_logger = get_audit_logger()
+    sqs_client = create_secure_client('sqs', region_name=AWS_REGION)
+    review_queue_name = "RVCE14_Review_Interface_Queue"
+    try:
+        review_queue_url = sqs_client.get_queue_url(QueueName=review_queue_name)["QueueUrl"]
+    except Exception:
+        review_queue_url = sqs_client.create_queue(QueueName=review_queue_name)["QueueUrl"]
 
     print(f"\nListening on {queue_name}...")
     print("Press Ctrl+C to stop\n")
@@ -877,6 +922,7 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
                 payload = json.loads(message['Body'])
                 document_id = payload.get('document_id', 'unknown')
                 source_file = payload.get('source_file')
+                layout_refined_file = payload.get('layout_refined_file')
 
                 # Load document text
                 if source_file and os.path.exists(source_file):
@@ -890,8 +936,22 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
                             text_lines.append(block.get('Text', ''))
 
                     document_text = '\n'.join(text_lines)
+                    textract_source_text = document_text
                 else:
                     document_text = payload.get('text', '')
+                    textract_source_text = document_text
+
+                # LayoutLMv3 refined source text if available
+                if not layout_refined_file:
+                    default_layout_path = os.path.join("tier2_refined", f"{document_id}_refined.json")
+                    layout_refined_file = default_layout_path if os.path.exists(default_layout_path) else None
+
+                layoutlm_source_text = ""
+                if layout_refined_file and os.path.exists(layout_refined_file):
+                    with open(layout_refined_file, 'r', encoding='utf-8') as f:
+                        layout_data = json.load(f)
+                    refined_elements = layout_data.get("refined_elements", [])
+                    layoutlm_source_text = "\n".join([e.get("text", "") for e in refined_elements if e.get("text")])
 
                 if not document_text:
                     print(f"No text found for {document_id}")
@@ -903,7 +963,49 @@ def process_track_b_queue(queue_name: str = 'TrackB_Summary_Queue'):
                 print(f"PHI entities flagged for {document_id}: {phi_summary['entity_count']}")
 
                 # Process document
-                results = pipeline.process_document(document_text, document_id, phi_entities=phi_entities)
+                results = pipeline.process_document(
+                    document_text,
+                    document_id,
+                    phi_entities=phi_entities,
+                    textract_source_text=textract_source_text,
+                    layoutlm_source_text=layoutlm_source_text,
+                )
+
+                # Route OCR-deviation flagged outputs to Review Interface and audit log.
+                for role_name, output in results.items():
+                    if not output.ocr_deviation_flag:
+                        continue
+                    review_payload = {
+                        "document_id": document_id,
+                        "role": role_name,
+                        "ocr_deviation_flag": True,
+                        "ocr_deviation_score": output.ocr_deviation_score,
+                        "ocr_deviation_details": output.ocr_deviation_details,
+                        "source_file": source_file,
+                        "layout_refined_file": layout_refined_file,
+                        "queued_at": datetime.utcnow().isoformat() + "Z",
+                    }
+                    try:
+                        sqs_client.send_message(QueueUrl=review_queue_url, MessageBody=json.dumps(review_payload))
+                        print(f"Queued {document_id}/{role_name} to {review_queue_name} due to OCR deviation.")
+                    except Exception as queue_error:
+                        print(f"Failed to queue review payload for {document_id}/{role_name}: {queue_error}")
+
+                    try:
+                        if audit_logger:
+                            audit_logger.log_change(
+                                document_id=document_id,
+                                user_id="SYSTEM",
+                                change_type="OCR_DEVIATION_GUARD",
+                                before_state={"role": role_name, "status": "auto_accept_candidate"},
+                                after_state={"role": role_name, "status": "manual_review_required"},
+                                metadata={
+                                    "ocr_deviation_score": output.ocr_deviation_score,
+                                    "ocr_deviation_details": output.ocr_deviation_details,
+                                },
+                            )
+                    except Exception as audit_error:
+                        print(f"Audit logging failed for OCR deviation guard on {document_id}/{role_name}: {audit_error}")
 
                 # Delete processed message
                 delete_from_sqs(queue_url, message['ReceiptHandle'])
@@ -999,7 +1101,9 @@ if __name__ == "__main__":
         pipeline = TrackBPipeline()
         results = pipeline.process_document(
             document_text=sample_document,
-            document_id="test_discharge_001"
+            document_id="test_discharge_001",
+            textract_source_text=sample_document,
+            layoutlm_source_text=sample_document,
         )
 
         print("\n" + "=" * 60)

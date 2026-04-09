@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 from urllib import parse, request
@@ -160,6 +161,81 @@ class MedicalValidationEngine:
             "corrected_output": corrected_output,
         }
         return self.last_report
+
+    def compute_ocr_deviation_guard(
+        self,
+        summary_output: Dict[str, Any],
+        textract_source_text: str,
+        layoutlm_source_text: str,
+        deviation_threshold: float = 0.30,
+    ) -> Dict[str, Any]:
+        """
+        Compare generated output against both OCR engine texts and flag if deviation
+        exceeds threshold for critical clinical terms.
+        """
+        checks: List[ValidationCheck] = []
+        critical_terms = self._extract_critical_terms(summary_output)
+        textract_text = textract_source_text or ""
+        layout_text = layoutlm_source_text or textract_text
+
+        term_results: List[Dict[str, Any]] = []
+        for term_obj in critical_terms:
+            term = term_obj["term"]
+            if not term:
+                continue
+            textract_dev = self._term_deviation_score(term, textract_text)
+            layout_dev = self._term_deviation_score(term, layout_text)
+            deviates_both = textract_dev > deviation_threshold and layout_dev > deviation_threshold
+            term_results.append(
+                {
+                    "term": term,
+                    "category": term_obj["category"],
+                    "textract_deviation": round(textract_dev, 4),
+                    "layoutlm_deviation": round(layout_dev, 4),
+                    "deviates_both": deviates_both,
+                }
+            )
+            checks.append(
+                ValidationCheck(
+                    check_name="ocr_deviation_term_check",
+                    passed=not deviates_both,
+                    severity="error" if deviates_both else "info",
+                    message=f"OCR deviation for '{term}': textract={textract_dev:.3f}, layout={layout_dev:.3f}",
+                    details=term_results[-1],
+                )
+            )
+
+        if not term_results:
+            max_deviation = 0.0
+            flagged = False
+        else:
+            max_deviation = max(max(r["textract_deviation"], r["layoutlm_deviation"]) for r in term_results)
+            flagged = any(r["deviates_both"] for r in term_results)
+
+        checks.append(
+            ValidationCheck(
+                check_name="ocr_deviation_document_gate",
+                passed=not flagged,
+                severity="error" if flagged else "info",
+                message=(
+                    "Document flagged for manual review due to OCR deviation >30% against both engines"
+                    if flagged else "Document passed OCR deviation guard"
+                ),
+                details={
+                    "deviation_threshold": deviation_threshold,
+                    "max_deviation_score": round(max_deviation, 4),
+                    "term_count_checked": len(term_results),
+                },
+            )
+        )
+
+        return {
+            "flagged_for_review": flagged,
+            "deviation_threshold": deviation_threshold,
+            "deviation_score": round(max_deviation, 4),
+            "critical_term_results": term_results,
+            "audit_checks": [c.as_dict() for c in checks],
+        }
 
     def _auto_correct_common_patterns(self, output: Dict[str, Any], checks: List[ValidationCheck]) -> Dict[str, Any]:
         corrected = dict(output)
@@ -421,3 +497,66 @@ class MedicalValidationEngine:
     @staticmethod
     def _tokenize(text: str) -> set:
         return set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9\-]{2,}\b", text.lower()))
+
+    @staticmethod
+    def _extract_critical_terms(summary_output: Dict[str, Any]) -> List[Dict[str, str]]:
+        terms: List[Dict[str, str]] = []
+        for med in summary_output.get("medications", []):
+            if isinstance(med, dict):
+                name = str(med.get("name", "")).strip()
+                dosage = str(med.get("dosage", "")).strip()
+                if name:
+                    terms.append({"term": name, "category": "drug_name"})
+                if dosage:
+                    terms.append({"term": dosage, "category": "dosage"})
+            elif isinstance(med, str) and med.strip():
+                terms.append({"term": med.strip(), "category": "drug_name"})
+        for dx in summary_output.get("diagnoses", []):
+            if str(dx).strip():
+                terms.append({"term": str(dx).strip(), "category": "diagnosis"})
+
+        # Procedure-like patterns from summary/key points.
+        text_blob = " ".join(
+            [summary_output.get("summary", "")] + summary_output.get("key_points", [])
+        )
+        proc_patterns = [
+            r"\b(?:catheterization|angioplasty|biopsy|surgery|echocardiogram|ecg|mri|ct scan|x-ray)\b",
+        ]
+        for pattern in proc_patterns:
+            for m in re.finditer(pattern, text_blob, re.IGNORECASE):
+                terms.append({"term": m.group(0), "category": "procedure"})
+
+        # Deduplicate preserving order
+        seen = set()
+        unique_terms = []
+        for t in terms:
+            key = (t["term"].lower(), t["category"])
+            if key not in seen:
+                unique_terms.append(t)
+                seen.add(key)
+        return unique_terms
+
+    @staticmethod
+    def _term_deviation_score(term: str, source_text: str) -> float:
+        """
+        0.0 = no deviation (excellent match), 1.0 = maximal deviation.
+        Uses best of token overlap and normalized edit similarity.
+        """
+        term_norm = " ".join(term.lower().split())
+        source_norm = " ".join(source_text.lower().split())
+        if not term_norm:
+            return 0.0
+        if not source_norm:
+            return 1.0
+        if term_norm in source_norm:
+            return 0.0
+
+        term_tokens = set(re.findall(r"\b[a-zA-Z0-9][a-zA-Z0-9\-./]*\b", term_norm))
+        source_tokens = set(re.findall(r"\b[a-zA-Z0-9][a-zA-Z0-9\-./]*\b", source_norm))
+        if not term_tokens:
+            return 1.0
+
+        overlap = len(term_tokens & source_tokens) / len(term_tokens)
+        seq_ratio = SequenceMatcher(None, term_norm, source_norm).ratio()
+        similarity = max(overlap, seq_ratio)
+        return max(0.0, min(1.0, 1 - similarity))
