@@ -3,6 +3,7 @@ import os
 import time
 import logging
 import math
+import re
 from hipaa_compliance import (
     build_phi_detection_summary,
     create_secure_client,
@@ -19,10 +20,15 @@ logger = logging.getLogger("track_a.snomed")
 
 AWS_REGION          = "us-east-1"          # RVCE_AIML account region
 MAX_COMPREHEND_CHARS = 9500                 # Comprehend Medical hard limit
-COMPREHEND_CONF_THRESHOLD = 0.80           # Below this → trigger fallback
+COMPREHEND_CONF_THRESHOLD = 0.75           # Below this → trigger fallback
 FAISS_TOP_K         = 10                   # Candidates to retrieve from FAISS
 MAX_RETRIES         = 3                    # Retry attempts before DLQ
 PERF_TARGET_SECONDS = 15                   # SRS acceptance criterion
+SLIDING_WINDOW_MIN_WORDS = 50              # SRS: 50-100 words
+SLIDING_WINDOW_MAX_WORDS = 100             # SRS: 50-100 words
+FAISS_INDEX_PATH    = "faiss_index/snomed.index"
+FAISS_META_PATH     = "faiss_index/snomed_meta.json"
+FAISS_MIN_CODES     = int(os.environ.get("SNOMED_FAISS_MIN_CODES", "50000"))
 
 CATEGORY_MAP = {
     "MEDICAL_CONDITION": "Problems_Issues",
@@ -44,24 +50,41 @@ comprehend_medical  = create_secure_client("comprehendmedical", region_name=AWS_
 
 
 
+def _normalize_token(token):
+    return re.sub(r"[^a-z0-9]+", "", token.lower())
+
+
 def _get_sliding_window(full_text, term, window_words=75):
     """
     Extract 50-100 word window around a clinical term to provide context.
     Per SRS: "sliding window of surrounding text (50-100 words)".
     """
     words = full_text.split()
-    term_words = term.lower().split()
+    if not words:
+        return ""
+
+    target_words = max(SLIDING_WINDOW_MIN_WORDS, min(SLIDING_WINDOW_MAX_WORDS, int(window_words)))
+    term_words = [_normalize_token(w) for w in term.split() if _normalize_token(w)]
+    if not term_words:
+        return " ".join(words[:target_words])
+
     for i, word in enumerate(words):
-        if word.lower().startswith(term_words[0]):
-            start = max(0, i - window_words // 2)
-            end   = min(len(words), i + window_words // 2)
+        if _normalize_token(word).startswith(term_words[0]):
+            start = max(0, i - target_words // 2)
+            end = min(len(words), start + target_words)
+
+            # Ensure lower bound window length when possible.
+            if end - start < SLIDING_WINDOW_MIN_WORDS and len(words) > SLIDING_WINDOW_MIN_WORDS:
+                deficit = SLIDING_WINDOW_MIN_WORDS - (end - start)
+                start = max(0, start - deficit)
+                end = min(len(words), max(end, start + SLIDING_WINDOW_MIN_WORDS))
             return " ".join(words[start:end])
-    return full_text[:500]  
+    return " ".join(words[:target_words])
 
 
-def _get_sapbert_embedding(text):
+def _get_sapbert_embedding(context_text):
     """
-    Generate a SapBERT embedding for a clinical term.
+    Generate a normalized SapBERT embedding for clinical context text.
 
     SapBERT is loaded lazily on first call so startup time stays fast.
     Per SRS: "uses SapBERT embeddings to retrieve top 10 SNOMED candidates
@@ -86,11 +109,16 @@ def _get_sapbert_embedding(text):
         tokenizer = _get_sapbert_embedding._tokenizer
         model     = _get_sapbert_embedding._model
 
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
+        inputs = tokenizer(context_text, return_tensors="pt", truncation=True, max_length=128)
         with torch.no_grad():
             outputs = model(**inputs)
         embedding = outputs.last_hidden_state.mean(dim=1).squeeze().numpy()
-        return embedding.astype(np.float32)
+        embedding = embedding.astype(np.float32)
+
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+        return embedding
 
     except ImportError:
         logger.warning("SapBERT dependencies not installed. Returning zero embedding.")
@@ -111,35 +139,44 @@ def _search_faiss(embedding, top_k=FAISS_TOP_K):
         import faiss
         import numpy as np
 
-        index_path = "faiss_index/snomed.index"
-        meta_path  = "faiss_index/snomed_meta.json"
-
-        if not os.path.exists(index_path) or not os.path.exists(meta_path):
-            logger.warning("FAISS index not found at %s. Skipping semantic search.", index_path)
+        if not os.path.exists(FAISS_INDEX_PATH) or not os.path.exists(FAISS_META_PATH):
+            logger.warning("FAISS index not found at %s. Skipping semantic search.", FAISS_INDEX_PATH)
             return []
 
         if not hasattr(_search_faiss, "_index"):
             logger.info("Loading FAISS index...")
-            _search_faiss._index = faiss.read_index(index_path)
-            with open(meta_path, "r") as f:
+            _search_faiss._index = faiss.read_index(FAISS_INDEX_PATH)
+            with open(FAISS_META_PATH, "r", encoding="utf-8") as f:
                 _search_faiss._meta = json.load(f)
-            logger.info("FAISS index loaded (%d entries).", _search_faiss._index.ntotal)
+            entry_count = min(_search_faiss._index.ntotal, len(_search_faiss._meta))
+            logger.info("FAISS index loaded (%d entries).", entry_count)
+            if entry_count < FAISS_MIN_CODES:
+                logger.warning(
+                    "FAISS index entries (%d) are below expected minimum (%d).",
+                    entry_count, FAISS_MIN_CODES
+                )
 
         index = _search_faiss._index
         meta  = _search_faiss._meta
 
-        query = embedding.reshape(1, -1)
+        query = embedding.reshape(1, -1).astype(np.float32)
+        if np.linalg.norm(query) == 0:
+            logger.warning("SapBERT embedding norm is zero. Skipping FAISS retrieval.")
+            return []
+        faiss.normalize_L2(query)
         distances, indices = index.search(query, top_k)
 
         candidates = []
         for dist, idx in zip(distances[0], indices[0]):
             if idx < 0 or idx >= len(meta):
                 continue
+            cosine_similarity = max(-1.0, min(1.0, float(dist)))
             candidates.append({
                 "snomed_code":   meta[idx]["code"],
                 "description":   meta[idx]["description"],
-                "faiss_distance": float(dist),
-                "similarity":    float(1 / (1 + dist)),
+                "faiss_distance": float(1 - cosine_similarity),
+                "similarity":    cosine_similarity,
+                "retrieval_confidence": round((cosine_similarity + 1) / 2, 4),
             })
         return candidates
 
@@ -176,6 +213,7 @@ def _cross_encoder_rerank(clinical_context, candidates):
         scores = model.predict(pairs)
         for candidate, score in zip(candidates, scores):
             candidate["cross_encoder_score"] = float(score)
+            candidate["cross_encoder_confidence"] = float(1 / (1 + math.exp(-float(score))))
 
         reranked = sorted(candidates, key=lambda x: x.get("cross_encoder_score", 0), reverse=True)
         return reranked
@@ -204,7 +242,7 @@ def semantic_snomed_fallback(term, full_text):
 
     context = _get_sliding_window(full_text, term)
 
-    embedding = _get_sapbert_embedding(term)
+    embedding = _get_sapbert_embedding(f"{term} [SEP] {context}")
 
     candidates = _search_faiss(embedding)
     if not candidates:
@@ -214,6 +252,10 @@ def semantic_snomed_fallback(term, full_text):
     reranked = _cross_encoder_rerank(context, candidates)
 
     best = reranked[0]
+    confidence = best.get("cross_encoder_confidence")
+    if confidence is None:
+        confidence = best.get("retrieval_confidence", 0.0)
+
     logger.info(
         "  [Fallback] Best match for '%s': %s (%s) score=%.3f",
         term, best["snomed_code"], best["description"],
@@ -222,9 +264,10 @@ def semantic_snomed_fallback(term, full_text):
     return {
         "snomed_code":   best["snomed_code"],
         "description":   best["description"],
-        "confidence":    round(best.get("cross_encoder_score", best.get("similarity", 0)), 4),
+        "confidence":    round(confidence, 4),
         "source":        "semantic_fallback",
-        "all_candidates": reranked[:5],  
+        "all_candidates": reranked[:FAISS_TOP_K],
+        "context_window": context,
     }
 
 
