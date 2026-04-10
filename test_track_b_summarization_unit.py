@@ -84,6 +84,15 @@ class TestTrackBSummarizationUnit(unittest.TestCase):
         self.assertEqual(many.shape[0], 2)
 
     @patch("track_b_summarization.create_secure_client")
+    def test_titan_embeddings_cache_reduces_calls(self, mock_client):
+        fake_runtime = MagicMock()
+        fake_runtime.invoke_model.return_value = {"body": _FakeBody(json.dumps({"embedding": [0.1, 0.2, 0.3]}))}
+        mock_client.return_value = fake_runtime
+        emb = tb.TitanEmbeddings()
+        emb.embed_batch(["repeat", "repeat", "repeat"])
+        self.assertEqual(fake_runtime.invoke_model.call_count, 1)
+
+    @patch("track_b_summarization.create_secure_client")
     @patch("track_b_summarization.BedrockPromptManager")
     def test_claude_generate_summary_includes_prompt_tracking(
         self, mock_prompt_manager_cls, mock_secure_client

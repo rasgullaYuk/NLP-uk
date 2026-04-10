@@ -29,6 +29,9 @@ from __future__ import annotations
 import logging
 import json
 import time
+import os
+import glob
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Optional
 from dataclasses import dataclass, asdict
@@ -45,6 +48,7 @@ except ImportError:
     )
 
 logger = logging.getLogger(__name__)
+TIER2_PAGE_TARGET_MS = float(os.getenv("TIER2_PAGE_TARGET_MS", "8000"))
 
 
 @dataclass
@@ -418,9 +422,6 @@ def refine_textract_batch(
     Returns:
         dict with processing statistics
     """
-    import os
-    import glob
-
     os.makedirs(output_dir, exist_ok=True)
 
     try:
@@ -440,52 +441,59 @@ def refine_textract_batch(
 
     processing_times = []
 
-    # Find all Textract JSON files
     json_files = glob.glob(os.path.join(input_dir, "*_textract.json"))
 
-    for json_file in json_files:
-        stats["total_files"] += 1
-
+    def _process(json_file: str) -> dict[str, Any]:
         try:
-            # Load Textract output
-            with open(json_file, "r") as f:
+            with open(json_file, "r", encoding="utf-8") as f:
                 textract_output = json.load(f)
 
-            # Find corresponding image
             base_name = os.path.basename(json_file).replace("_textract.json", "")
-            image_path = os.path.join(image_dir, f"{base_name}_CLEANED.png")
+            image_candidates = [
+                os.path.join(image_dir, f"{base_name}_CLEANED.png"),
+                os.path.join(image_dir, f"{base_name}_CLEANED.jpg"),
+                os.path.join(image_dir, f"{base_name}_CLEANED.jpeg"),
+            ]
+            image_path = next((p for p in image_candidates if os.path.exists(p)), None)
+            if not image_path:
+                return {"status": "failed", "error": f"Image not found for {base_name}"}
 
-            if not os.path.exists(image_path):
-                logger.warning(f"Image not found: {image_path}")
-                stats["failed"] += 1
-                continue
-
-            # Load image
             page_image = Image.open(image_path)
-
-            # Run refinement
             output = refiner.refine_document(
                 textract_output=textract_output,
                 page_image=page_image,
                 document_id=base_name,
                 page_number=1,
             )
-
-            # Save refined output
             output_file = os.path.join(output_dir, f"{base_name}_refined.json")
-            with open(output_file, "w") as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(asdict(output), f, indent=2, default=str)
-
-            stats["successful"] += 1
-            stats["total_elements"] += len(output.refined_elements)
-            stats["escalated_elements"] += len(output.escalation_queue)
-            processing_times.append(output.processing_time_ms)
-
-            logger.info(f"Refined: {base_name}")
-
+            return {
+                "status": "success",
+                "base_name": base_name,
+                "processing_time_ms": output.processing_time_ms,
+                "escalated_elements": len(output.escalation_queue),
+                "total_elements": len(output.refined_elements),
+                "target_met": output.processing_time_ms <= TIER2_PAGE_TARGET_MS,
+            }
         except Exception as e:
-            logger.error(f"Failed to process {json_file}: {e}")
-            stats["failed"] += 1
+            return {"status": "failed", "error": str(e)}
+
+    max_workers = max(1, min(len(json_files) or 1, int(os.getenv("TIER2_BATCH_WORKERS", "4"))))
+    stats["total_files"] = len(json_files)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_process, path) for path in json_files]
+        for future in as_completed(futures):
+            result = future.result()
+            if result["status"] == "success":
+                stats["successful"] += 1
+                stats["total_elements"] += result["total_elements"]
+                stats["escalated_elements"] += result["escalated_elements"]
+                processing_times.append(result["processing_time_ms"])
+                logger.info("Refined: %s", result["base_name"])
+            else:
+                logger.error("Failed to process file: %s", result.get("error", "unknown error"))
+                stats["failed"] += 1
 
     if processing_times:
         stats["avg_processing_time_ms"] = np.mean(processing_times)

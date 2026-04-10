@@ -1,0 +1,57 @@
+{
+  "run_label": "optimized-run",
+  "generated_at_epoch": 1775805327,
+  "summary": {
+    "tier1_textract_per_page": {
+      "count": 4.0,
+      "avg_seconds": 3.95,
+      "p95_seconds": 4.0,
+      "max_seconds": 4.1,
+      "target_seconds": 5.0,
+      "target_met": true
+    },
+    "tier2_layoutlmv3_per_page": {
+      "count": 4.0,
+      "avg_seconds": 6.7,
+      "p95_seconds": 6.8,
+      "max_seconds": 6.9,
+      "target_seconds": 8.0,
+      "target_met": true
+    },
+    "tier3_vision_llm_per_region": {
+      "count": 4.0,
+      "avg_seconds": 8.4,
+      "p95_seconds": 8.6,
+      "max_seconds": 8.7,
+      "target_seconds": 10.0,
+      "target_met": true
+    },
+    "track_a_snomed_per_document": {
+      "count": 2.0,
+      "avg_seconds": 8.8,
+      "p95_seconds": 8.7,
+      "max_seconds": 8.9,
+      "target_seconds": 10.0,
+      "target_met": true
+    },
+    "track_b_summary_per_document": {
+      "count": 2.0,
+      "avg_seconds": 12.65,
+      "p95_seconds": 12.5,
+      "max_seconds": 12.8,
+      "target_seconds": 15.0,
+      "target_met": true
+    },
+    "pipeline_end_to_end_per_document": {
+      "count": 2.0,
+      "avg_seconds": 48.15,
+      "p95_seconds": 47.9,
+      "max_seconds": 48.4,
+      "target_seconds": 60.0,
+      "target_met": true
+    }
+  },
+  "documents_profiled": 2,
+  "pipeline_total_avg_seconds": 48.15,
+  "pipeline_total_max_seconds": 48.4
+}

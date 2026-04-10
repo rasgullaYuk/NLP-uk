@@ -36,6 +36,7 @@ Output
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from PIL import Image
@@ -65,6 +66,7 @@ except ImportError:
     from dynamodb_integration import write_audit_batch_to_dynamodb
 
 logger = logging.getLogger(__name__)
+TIER3_REGION_TARGET_SECONDS = 10.0
 
 
 # ── Idempotency registry (in-process, per-call cache) ─────────────────────────
@@ -134,6 +136,7 @@ def process_low_confidence_regions(
     seen_fingerprints: set[str] = set()
 
     for idx, region in enumerate(low_confidence_regions):
+        region_start = time.perf_counter()
         ocr_text      = (region.get("text") or "").strip()
         ocr_confidence = float(region.get("confidence", 0.0))
         bbox           = region.get("bbox", [])
@@ -362,6 +365,14 @@ def process_low_confidence_regions(
             "reasoning":            reasoning,
         })
         processed_regions.append(r)
+        r["processing_time_seconds"] = round(time.perf_counter() - region_start, 4)
+        if r["processing_time_seconds"] > TIER3_REGION_TARGET_SECONDS:
+            logger.warning(
+                "%s latency target missed: %.2fs > %.2fs",
+                log_prefix,
+                r["processing_time_seconds"],
+                TIER3_REGION_TARGET_SECONDS,
+            )
 
         audit_log.append(audit_logging(
             original_text=ocr_text,
@@ -392,6 +403,7 @@ def process_low_confidence_regions(
         "status":            overall_status,
         "corrected_regions": merged_regions,
         "audit_log":         audit_log,
+        "latency_target_seconds_per_region": TIER3_REGION_TARGET_SECONDS,
     }
 
     # -- Persist audit trail to DynamoDB (non-blocking) --------------------------

@@ -4,6 +4,7 @@ import time
 import logging
 import math
 import re
+import hashlib
 from cloudwatch_monitoring import CloudWatchMonitoringManager, infer_document_type
 from hipaa_compliance import (
     build_phi_detection_summary,
@@ -30,6 +31,7 @@ SLIDING_WINDOW_MAX_WORDS = 100             # SRS: 50-100 words
 FAISS_INDEX_PATH    = "faiss_index/snomed.index"
 FAISS_META_PATH     = "faiss_index/snomed_meta.json"
 FAISS_MIN_CODES     = int(os.environ.get("SNOMED_FAISS_MIN_CODES", "50000"))
+TRACK_A_TARGET_SECONDS = float(os.environ.get("TRACK_A_TARGET_SECONDS", "10"))
 
 CATEGORY_MAP = {
     "MEDICAL_CONDITION": "Problems_Issues",
@@ -52,6 +54,9 @@ try:
     cloudwatch_monitor = CloudWatchMonitoringManager()
 except Exception:
     cloudwatch_monitor = None
+
+_SEMANTIC_FALLBACK_CACHE = {}
+_MAP_ENTITY_CACHE = {}
 
 
 
@@ -243,9 +248,12 @@ def semantic_snomed_fallback(term, full_text):
     Returns a dict with snomed_code, description, confidence, source='semantic_fallback'
     or None if fallback also fails.
     """
-    logger.info("  [Fallback] Running semantic search for term: '%s'", term)
-
     context = _get_sliding_window(full_text, term)
+    cache_key = hashlib.sha256(f"{term}|{context}".encode("utf-8")).hexdigest()
+    if cache_key in _SEMANTIC_FALLBACK_CACHE:
+        return _SEMANTIC_FALLBACK_CACHE[cache_key]
+
+    logger.info("  [Fallback] Running semantic search for term: '%s'", term)
 
     embedding = _get_sapbert_embedding(f"{term} [SEP] {context}")
 
@@ -266,7 +274,7 @@ def semantic_snomed_fallback(term, full_text):
         term, best["snomed_code"], best["description"],
         best.get("cross_encoder_score", best.get("similarity", 0))
     )
-    return {
+    output = {
         "snomed_code":   best["snomed_code"],
         "description":   best["description"],
         "confidence":    round(confidence, 4),
@@ -274,6 +282,8 @@ def semantic_snomed_fallback(term, full_text):
         "all_candidates": reranked[:FAISS_TOP_K],
         "context_window": context,
     }
+    _SEMANTIC_FALLBACK_CACHE[cache_key] = output
+    return output
 
 
 # ===========================================================================
@@ -370,15 +380,21 @@ def map_entity_to_snomed(entity, full_text):
     text = entity.get("Text", "")
     concepts = entity.get("SNOMEDCTConcepts", [])
     comprehend_conf = entity.get("Score", 0)
+    concept_key = concepts[0].get("Code", "") if concepts else ""
+    cache_key = hashlib.sha256(f"{text}|{round(comprehend_conf,4)}|{concept_key}".encode("utf-8")).hexdigest()
+    if cache_key in _MAP_ENTITY_CACHE:
+        return _MAP_ENTITY_CACHE[cache_key]
 
     if concepts and comprehend_conf >= COMPREHEND_CONF_THRESHOLD:
         top = concepts[0]
-        return {
+        output = {
             "snomed_code": top.get("Code", "NOT_MAPPED"),
             "description": top.get("Description", ""),
             "confidence":  round(comprehend_conf, 4),
             "source":      "comprehend_medical",
         }, comprehend_conf
+        _MAP_ENTITY_CACHE[cache_key] = output
+        return output
 
     logger.info(
         "  Confidence %.2f < %.2f for '%s' — triggering semantic fallback.",
@@ -386,14 +402,18 @@ def map_entity_to_snomed(entity, full_text):
     )
     fallback_result = semantic_snomed_fallback(text, full_text)
     if fallback_result:
-        return fallback_result, fallback_result["confidence"]
+        output = (fallback_result, fallback_result["confidence"])
+        _MAP_ENTITY_CACHE[cache_key] = output
+        return output
 
-    return {
+    output = ({
         "snomed_code": "NOT_MAPPED",
         "description": "",
         "confidence":  0.0,
         "source":      "failed",
-    }, 0.0
+    }, 0.0)
+    _MAP_ENTITY_CACHE[cache_key] = output
+    return output
 
 
 # ===========================================================================
@@ -432,18 +452,19 @@ def process_document(file_path):
     if not text_to_analyze.strip():
         raise ValueError("No text found in Textract output — cannot process.")
 
-    logger.info(
-        "Calling Amazon Comprehend Medical InferSNOMEDCT (PHI flagged=%d).",
-        phi_summary["entity_count"],
-    )
+    stage_timings = {}
+    infer_start = time.perf_counter()
+    logger.info("Calling Amazon Comprehend Medical InferSNOMEDCT (PHI flagged=%d).", phi_summary["entity_count"])
     logger.debug("Masked clinical text preview: %s", scrub_text_for_logs(full_text, phi_entities)[:240])
     print("  Sending text to AWS Comprehend Medical...")
     snomed_response = comprehend_medical.infer_snomedct(Text=text_to_analyze)
+    stage_timings["comprehend_seconds"] = round(time.perf_counter() - infer_start, 4)
 
     entities = snomed_response.get("Entities", [])
     logger.info("Comprehend returned %d entities.", len(entities))
     print(f"  Comprehend returned {len(entities)} entities.")
 
+    mapping_start = time.perf_counter()
     enriched_entities = []
     fallback_count = 0
     for entity in entities:
@@ -462,6 +483,7 @@ def process_document(file_path):
         len(enriched_entities) - fallback_count,
         fallback_count,
     )
+    stage_timings["mapping_seconds"] = round(time.perf_counter() - mapping_start, 4)
 
     categories = categorize_entities(enriched_entities, full_text)
 
@@ -476,13 +498,13 @@ def process_document(file_path):
 
     elapsed = round(time.time() - t_start, 3)
 
-    if elapsed > PERF_TARGET_SECONDS:
+    if elapsed > TRACK_A_TARGET_SECONDS:
         logger.warning(
-            "Performance target missed: %.2fs > %ds for '%s'.",
-            elapsed, PERF_TARGET_SECONDS, file_path
+            "Performance target missed: %.2fs > %.2fs for '%s'.",
+            elapsed, TRACK_A_TARGET_SECONDS, file_path
         )
     else:
-        logger.info("Performance OK: %.2fs < %ds.", elapsed, PERF_TARGET_SECONDS)
+        logger.info("Performance OK: %.2fs < %ss.", elapsed, TRACK_A_TARGET_SECONDS)
 
     if cloudwatch_monitor:
         try:
@@ -505,6 +527,9 @@ def process_document(file_path):
         "categorized_entities":    categories,
         "unified_confidence_score": unified_confidence,
         "processing_time_seconds": elapsed,
+        "stage_timings_seconds": stage_timings,
+        "latency_target_seconds": TRACK_A_TARGET_SECONDS,
+        "latency_target_met": elapsed <= TRACK_A_TARGET_SECONDS,
         "comprehend_model_version": snomed_response.get("ModelVersion", "unknown"),
         "phi_detection":           phi_summary,
     }

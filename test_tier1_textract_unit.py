@@ -42,6 +42,7 @@ class TestTier1Textract(unittest.TestCase):
 
             output_file = os.path.join(output_dir, "doc_page_1_CLEANED_textract.json")
             self.assertTrue(os.path.exists(output_file))
+            self.assertTrue(os.path.exists(os.path.join(output_dir, "tier1_latency_profile.json")))
             with open(output_file, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             self.assertIn("PhiDetection", saved)

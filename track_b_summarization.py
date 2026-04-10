@@ -20,6 +20,8 @@ import os
 import re
 import time
 import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
@@ -39,6 +41,7 @@ from track_b_validation import MedicalValidationEngine
 AWS_REGION = "us-east-1"
 BEDROCK_CLAUDE_MODEL = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 BEDROCK_TITAN_EMBED_MODEL = "amazon.titan-embed-text-v1"
+TRACK_B_TARGET_SECONDS = float(os.getenv("TRACK_B_TARGET_SECONDS", "15"))
 
 # Paths
 SUMMARY_OUTPUT_DIR = "track_b_outputs"
@@ -281,6 +284,16 @@ class TitanEmbeddings:
         )
         self.model_id = BEDROCK_TITAN_EMBED_MODEL
         self.embedding_dim = 1536  # Titan v1 dimension
+        self._cache: Dict[str, np.ndarray] = {}
+        self._cache_lock = threading.Lock()
+        self.max_workers = max(1, int(os.getenv("TRACK_B_EMBED_WORKERS", "4")))
+
+    def _embed_uncached(self, text: str) -> np.ndarray:
+        text = text[:8000]
+        body = json.dumps({"inputText": text})
+        response = self.bedrock.invoke_model(modelId=self.model_id, body=body)
+        result = json.loads(response['body'].read())
+        return np.array(result['embedding'], dtype=np.float32)
 
     def embed_text(self, text: str) -> np.ndarray:
         """
@@ -292,20 +305,15 @@ class TitanEmbeddings:
         Returns:
             numpy array of embedding
         """
-        # Truncate if too long (Titan limit is ~8000 tokens)
-        text = text[:8000]
-
-        body = json.dumps({
-            "inputText": text
-        })
-
-        response = self.bedrock.invoke_model(
-            modelId=self.model_id,
-            body=body
-        )
-
-        result = json.loads(response['body'].read())
-        return np.array(result['embedding'], dtype=np.float32)
+        cache_key = hashlib.sha256(text[:8000].encode("utf-8")).hexdigest()
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        embedding = self._embed_uncached(text)
+        with self._cache_lock:
+            self._cache[cache_key] = embedding
+        return embedding
 
     def embed_batch(self, texts: List[str]) -> np.ndarray:
         """
@@ -317,12 +325,32 @@ class TitanEmbeddings:
         Returns:
             numpy array of embeddings (n_texts x embedding_dim)
         """
-        embeddings = []
-        for text in texts:
-            embedding = self.embed_text(text)
-            embeddings.append(embedding)
+        if not texts:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
 
-        return np.vstack(embeddings)
+        unique_map: Dict[str, str] = {}
+        for text in texts:
+            key = hashlib.sha256(text[:8000].encode("utf-8")).hexdigest()
+            unique_map.setdefault(key, text)
+
+        missing: Dict[str, str] = {}
+        with self._cache_lock:
+            for key, text in unique_map.items():
+                if key not in self._cache:
+                    missing[key] = text
+
+        if missing:
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(missing))) as executor:
+                futures = {executor.submit(self._embed_uncached, text): key for key, text in missing.items()}
+                for future in as_completed(futures):
+                    key = futures[future]
+                    embedding = future.result()
+                    with self._cache_lock:
+                        self._cache[key] = embedding
+
+        with self._cache_lock:
+            ordered = [self._cache[hashlib.sha256(text[:8000].encode("utf-8")).hexdigest()] for text in texts]
+        return np.vstack(ordered)
 
 
 class FAISSIndex:
@@ -650,6 +678,7 @@ class TrackBPipeline:
         self.index = FAISSIndex()
         self.summarizer = ClaudeSummarizer()
         self.validator = SummaryValidator()
+        self.last_metrics: Dict[str, Any] = {}
 
         # Create output directory
         os.makedirs(SUMMARY_OUTPUT_DIR, exist_ok=True)
@@ -677,35 +706,46 @@ class TrackBPipeline:
 
         start_time = time.time()
         results = {}
+        timings: Dict[str, float] = {}
 
         print(f"\nProcessing document: {document_id}")
 
+        chunk_start = time.perf_counter()
         # 1. Chunk the document
         chunks = self.chunker.chunk_document(document_text, document_id)
         doc_type = chunks[0].document_type if chunks else DocumentType.UNKNOWN
         print(f"  Document type: {doc_type.value}")
         print(f"  Chunks created: {len(chunks)}")
+        timings["chunking_seconds"] = round(time.perf_counter() - chunk_start, 4)
 
+        embed_start = time.perf_counter()
         # 2. Generate embeddings for chunks
         chunk_texts = [c.text for c in chunks]
         chunk_embeddings = self.embeddings.embed_batch(chunk_texts)
+        timings["chunk_embedding_seconds"] = round(time.perf_counter() - embed_start, 4)
 
+        index_start = time.perf_counter()
         # 3. Add to index (for this document)
         self.index.add_chunks(chunks, chunk_embeddings)
+        timings["index_add_seconds"] = round(time.perf_counter() - index_start, 4)
 
+        query_start = time.perf_counter()
         # 4. Generate query embedding (use first chunk as summary query)
         query_text = f"Summarize this {doc_type.value}: {chunk_texts[0][:200]}"
         query_embedding = self.embeddings.embed_text(query_text)
+        timings["query_embedding_seconds"] = round(time.perf_counter() - query_start, 4)
 
+        retrieve_start = time.perf_counter()
         # 5. Retrieve relevant context
         search_results = self.index.search(query_embedding, k=5)
         retrieved_context = [r[0].text if isinstance(r[0], DocumentChunk) else r[0].get('text', '')
                             for r in search_results]
+        timings["retrieval_seconds"] = round(time.perf_counter() - retrieve_start, 4)
 
-        # 6. Generate role-based summaries
-        for role in roles:
+        def _build_summary_for_role(role: SummaryRole):
             role_start = time.time()
             print(f"  Generating {role.value} summary...")
+            role_validator = SummaryValidator()
 
             try:
                 # Generate summary
@@ -719,18 +759,18 @@ class TrackBPipeline:
                 prompt_tracking = summary_data.get("prompt_tracking", {})
 
                 # Validate
-                is_valid, validation_errors = self.validator.validate(
+                is_valid, validation_errors = role_validator.validate(
                     summary_data, document_text, doc_type
                 )
-                validation_report = self.validator.get_last_report()
+                validation_report = role_validator.get_last_report()
                 corrected_summary = validation_report.get("corrected_output", summary_data)
                 corrected_summary["prompt_tracking"] = prompt_tracking
 
                 # Calculate hallucination score
-                hallucination_score = self.validator.calculate_hallucination_score(
+                hallucination_score = role_validator.calculate_hallucination_score(
                     corrected_summary, document_text
                 )
-                ocr_deviation = self.validator.compute_ocr_deviation_guard(
+                ocr_deviation = role_validator.compute_ocr_deviation_guard(
                     summary_output=corrected_summary,
                     textract_source_text=textract_source_text or document_text,
                     layoutlm_source_text=layoutlm_source_text or textract_source_text or document_text,
@@ -740,7 +780,7 @@ class TrackBPipeline:
 
                 generation_time = int((time.time() - role_start) * 1000)
 
-                results[role.value] = SummaryOutput(
+                output = SummaryOutput(
                     document_id=document_id,
                     role=role,
                     summary=corrected_summary.get('summary', ''),
@@ -767,10 +807,11 @@ class TrackBPipeline:
                 print(f"    OCR deviation score: {ocr_deviation.get('deviation_score', 0.0):.3f} | "
                       f"Flagged: {ocr_deviation.get('flagged_for_review', False)}")
                 print(f"    Time: {generation_time}ms")
+                return role.value, output, generation_time
 
             except Exception as e:
                 print(f"    ERROR: {e}")
-                results[role.value] = SummaryOutput(
+                output = SummaryOutput(
                     document_id=document_id,
                     role=role,
                     summary=f"Error generating summary: {str(e)}",
@@ -791,9 +832,22 @@ class TrackBPipeline:
                     generation_time_ms=0,
                     prompt_tracking={},
                 )
+                return role.value, output, 0
+
+        role_workers = max(1, min(len(roles), int(os.getenv("TRACK_B_ROLE_WORKERS", "3"))))
+        with ThreadPoolExecutor(max_workers=role_workers) as executor:
+            futures = [executor.submit(_build_summary_for_role, role) for role in roles]
+            for future in as_completed(futures):
+                role_name, output, generation_time = future.result()
+                results[role_name] = output
+                timings[f"role_{role_name}_seconds"] = round(generation_time / 1000.0, 4)
 
         total_time = time.time() - start_time
         print(f"  Total processing time: {total_time:.2f}s")
+        timings["total_seconds"] = round(total_time, 4)
+        timings["target_seconds"] = TRACK_B_TARGET_SECONDS
+        timings["target_met"] = total_time <= TRACK_B_TARGET_SECONDS
+        self.last_metrics = timings
 
         # 7. Save results
         self._save_results(document_id, results, phi_entities=phi_entities or [])

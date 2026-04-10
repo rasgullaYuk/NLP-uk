@@ -1,0 +1,17 @@
+{
+  "tier1_pages": [
+    {"latency_seconds": 3.8},
+    {"latency_seconds": 4.1}
+  ],
+  "tier2_pages": [
+    {"latency_seconds": 6.5},
+    {"latency_seconds": 6.9}
+  ],
+  "tier3_regions": [
+    {"latency_seconds": 8.2},
+    {"latency_seconds": 8.6}
+  ],
+  "track_a_seconds": 8.7,
+  "track_b_seconds": 12.5,
+  "pipeline_total_seconds": 47.9
+}

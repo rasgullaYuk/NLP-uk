@@ -115,6 +115,21 @@ class TestTrackASnomedUnit(unittest.TestCase):
         self.assertEqual(result["source"], "failed")
         self.assertEqual(conf, 0.0)
 
+    @patch("track_a_snomed.semantic_snomed_fallback")
+    def test_map_entity_to_snomed_uses_cache(self, mock_fallback):
+        snomed._MAP_ENTITY_CACHE.clear()
+        mock_fallback.return_value = {
+            "snomed_code": "999",
+            "description": "Fallback",
+            "confidence": 0.77,
+            "source": "semantic_fallback",
+        }
+        entity = {"Text": "Cache term", "Score": 0.2, "SNOMEDCTConcepts": []}
+        first = snomed.map_entity_to_snomed(entity, "context")
+        second = snomed.map_entity_to_snomed(entity, "context")
+        self.assertEqual(first, second)
+        mock_fallback.assert_called_once()
+
     @patch("track_a_snomed.cloudwatch_monitor", None)
     @patch("track_a_snomed.comprehend_medical")
     @patch("track_a_snomed.detect_phi_entities")
