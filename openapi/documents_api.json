@@ -1,0 +1,148 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Clinical NLP Documents API",
+    "version": "1.0.0",
+    "description": "REST API for document upload, processing status, extraction, SNOMED mappings, summaries, approvals, and audit retrieval."
+  },
+  "servers": [
+    {
+      "url": "https://{api_id}.execute-api.us-east-1.amazonaws.com/{stage}",
+      "variables": {
+        "api_id": { "default": "your-api-id" },
+        "stage": { "default": "prod" }
+      }
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    { "ApiKeyAuth": [] },
+    { "BearerAuth": [] }
+  ],
+  "paths": {
+    "/documents/upload": {
+      "post": {
+        "summary": "Upload a document",
+        "description": "Accepts PDF/TIFF/JPEG as binary payload (base64 in API Gateway proxy) with x-filename header.",
+        "responses": {
+          "201": { "description": "Uploaded" },
+          "400": { "description": "Invalid request" },
+          "401": { "description": "Unauthorized" }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": {
+        "responses": { "200": { "description": "CORS preflight" } }
+      }
+    },
+    "/documents/{doc_id}/status": {
+      "get": {
+        "summary": "Get processing status",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Status payload" }, "404": { "description": "Not found" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    },
+    "/documents/{doc_id}/extraction": {
+      "get": {
+        "summary": "Get extraction output text",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Extraction payload" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    },
+    "/documents/{doc_id}/snomed": {
+      "get": {
+        "summary": "Get SNOMED mapping",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "SNOMED payload" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    },
+    "/documents/{doc_id}/summary": {
+      "get": {
+        "summary": "Get clinical summary",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Summary payload" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    },
+    "/documents/{doc_id}/approve": {
+      "put": {
+        "summary": "Approve a document",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Approved" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    },
+    "/audit/{doc_id}": {
+      "get": {
+        "summary": "Get audit trail by document id",
+        "parameters": [{ "name": "doc_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Audit payload" } },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${api_lambda_arn}/invocations"
+        }
+      },
+      "options": { "responses": { "200": { "description": "CORS preflight" } } }
+    }
+  },
+  "x-amazon-apigateway-request-validators": {
+    "all": {
+      "validateRequestBody": true,
+      "validateRequestParameters": true
+    }
+  },
+  "x-amazon-apigateway-gateway-responses": {
+    "DEFAULT_4XX": {
+      "responseParameters": {
+        "gatewayresponse.header.Access-Control-Allow-Origin": "'*'",
+        "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,x-api-key'",
+        "gatewayresponse.header.Access-Control-Allow-Methods": "'OPTIONS,GET,POST,PUT'"
+      }
+    }
+  }
+}
