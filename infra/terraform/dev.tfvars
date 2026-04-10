@@ -1,0 +1,6 @@
+project_name              = "nlp-uk"
+environment               = "dev"
+aws_region                = "us-east-1"
+container_image_review_ui = "123456789012.dkr.ecr.us-east-1.amazonaws.com/nlp-uk-review-ui:dev"
+container_image_worker    = "123456789012.dkr.ecr.us-east-1.amazonaws.com/nlp-uk-worker:dev"
+notification_email        = "alerts@example.com"

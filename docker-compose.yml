@@ -1,0 +1,35 @@
+services:
+  review-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nlp-uk:latest
+    container_name: nlp-uk-review-ui
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    env_file:
+      - config/environments/dev.env
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  track-a-worker:
+    image: nlp-uk:latest
+    container_name: nlp-uk-track-a-worker
+    command: python track_a_snomed.py
+    env_file:
+      - config/environments/dev.env
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  track-b-worker:
+    image: nlp-uk:latest
+    container_name: nlp-uk-track-b-worker
+    command: python track_b_summarization.py --queue
+    env_file:
+      - config/environments/dev.env
+    volumes:
+      - ./:/app
+    restart: unless-stopped
