@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import hashlib
+from cost_optimization import SnomedMappingCache
 from cloudwatch_monitoring import CloudWatchMonitoringManager, infer_document_type
 from hipaa_compliance import (
     build_phi_detection_summary,
@@ -54,6 +55,7 @@ try:
     cloudwatch_monitor = CloudWatchMonitoringManager()
 except Exception:
     cloudwatch_monitor = None
+snomed_cache = SnomedMappingCache()
 
 _SEMANTIC_FALLBACK_CACHE = {}
 _MAP_ENTITY_CACHE = {}
@@ -457,7 +459,12 @@ def process_document(file_path):
     logger.info("Calling Amazon Comprehend Medical InferSNOMEDCT (PHI flagged=%d).", phi_summary["entity_count"])
     logger.debug("Masked clinical text preview: %s", scrub_text_for_logs(full_text, phi_entities)[:240])
     print("  Sending text to AWS Comprehend Medical...")
-    snomed_response = comprehend_medical.infer_snomedct(Text=text_to_analyze)
+    cache_key = hashlib.sha256(text_to_analyze.encode("utf-8")).hexdigest()
+    snomed_response = snomed_cache.get(cache_key)
+    from_cache = bool(snomed_response)
+    if not snomed_response:
+        snomed_response = comprehend_medical.infer_snomedct(Text=text_to_analyze)
+        snomed_cache.put(cache_key, snomed_response)
     stage_timings["comprehend_seconds"] = round(time.perf_counter() - infer_start, 4)
 
     entities = snomed_response.get("Entities", [])
@@ -531,6 +538,7 @@ def process_document(file_path):
         "latency_target_seconds": TRACK_A_TARGET_SECONDS,
         "latency_target_met": elapsed <= TRACK_A_TARGET_SECONDS,
         "comprehend_model_version": snomed_response.get("ModelVersion", "unknown"),
+        "comprehend_response_cached": from_cache,
         "phi_detection":           phi_summary,
     }
 

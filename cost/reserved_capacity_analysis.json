@@ -1,0 +1,24 @@
+{
+  "analysis_window_days": 30,
+  "services": [
+    {
+      "service": "DynamoDB",
+      "usage_pattern": "steady",
+      "recommendation": "Enable reserved capacity for read/write units on audit and cache tables",
+      "estimated_monthly_savings_percent": 28
+    },
+    {
+      "service": "Lambda",
+      "usage_pattern": "spiky-with-daily-peaks",
+      "recommendation": "Use provisioned concurrency only for daytime peak windows",
+      "estimated_monthly_savings_percent": 18
+    },
+    {
+      "service": "SQS",
+      "usage_pattern": "high-throughput-batch",
+      "recommendation": "Use long polling and batch receives to reduce API request costs",
+      "estimated_monthly_savings_percent": 12
+    }
+  ],
+  "overall_target_savings_percent": 30
+}
