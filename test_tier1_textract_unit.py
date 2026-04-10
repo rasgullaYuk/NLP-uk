@@ -50,6 +50,42 @@ class TestTier1Textract(unittest.TestCase):
 
     @patch("tier1_textract.infer_document_type", return_value="unknown")
     @patch("tier1_textract.CloudWatchMonitoringManager")
+    @patch("tier1_textract.build_phi_detection_summary", return_value={"entity_count": 1})
+    @patch("tier1_textract.detect_phi_entities", return_value=[{"Text": "John"}])
+    @patch("tier1_textract.create_secure_client")
+    @patch("tier1_textract.RequestDeduplicator")
+    def test_process_documents_deduplicates_requests(
+        self,
+        mock_dedup_cls,
+        mock_client,
+        _mock_detect,
+        _mock_phi_summary,
+        mock_monitor_cls,
+        _mock_doc_type,
+    ):
+        textract_client = MagicMock()
+        textract_client.analyze_document.return_value = {
+            "Blocks": [{"BlockType": "LINE", "Text": "Patient has fever", "Confidence": 99.0}]
+        }
+        mock_client.return_value = textract_client
+        mock_monitor_cls.return_value = MagicMock()
+        dedup = MagicMock()
+        dedup.is_duplicate.side_effect = [False, True]
+        mock_dedup_cls.return_value = dedup
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = os.path.join(temp_dir, "temp_pages")
+            output_dir = os.path.join(temp_dir, "textract_outputs")
+            os.makedirs(input_dir, exist_ok=True)
+            for name in ["doc_a_CLEANED.jpg", "doc_b_CLEANED.jpg"]:
+                with open(os.path.join(input_dir, name), "wb") as f:
+                    f.write(b"same-image")
+
+            tier1_textract.process_documents_with_textract(input_dir=input_dir, output_dir=output_dir)
+            self.assertEqual(textract_client.analyze_document.call_count, 1)
+
+    @patch("tier1_textract.infer_document_type", return_value="unknown")
+    @patch("tier1_textract.CloudWatchMonitoringManager")
     @patch("tier1_textract.create_secure_client")
     def test_process_documents_handles_textract_error(
         self, mock_client, mock_monitor_cls, _mock_doc_type

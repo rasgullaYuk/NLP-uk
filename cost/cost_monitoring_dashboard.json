@@ -1,0 +1,36 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Textract API Calls",
+        "region": "us-east-1",
+        "metrics": [
+          ["AWS/Usage", "CallCount", "Type", "API", "Resource", "Textract"]
+        ],
+        "stat": "Sum",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Bedrock Invocation Count",
+        "region": "us-east-1",
+        "metrics": [
+          ["AWS/Bedrock", "InvocationCount", "ModelId", "ALL"]
+        ],
+        "stat": "Sum",
+        "period": 300
+      }
+    }
+  ]
+}

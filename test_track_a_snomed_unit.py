@@ -131,10 +131,12 @@ class TestTrackASnomedUnit(unittest.TestCase):
         mock_fallback.assert_called_once()
 
     @patch("track_a_snomed.cloudwatch_monitor", None)
+    @patch("track_a_snomed.snomed_cache")
     @patch("track_a_snomed.comprehend_medical")
     @patch("track_a_snomed.detect_phi_entities")
-    def test_process_document_success(self, mock_phi, mock_cm):
+    def test_process_document_success(self, mock_phi, mock_cm, mock_cache):
         mock_phi.return_value = []
+        mock_cache.get.return_value = None
         mock_cm.infer_snomedct.return_value = {
             "Entities": [
                 {
@@ -154,6 +156,25 @@ class TestTrackASnomedUnit(unittest.TestCase):
             result = snomed.process_document(p)
             self.assertEqual(result["status"], "SUCCESS")
             self.assertEqual(result["total_entities"], 1)
+            self.assertFalse(result["comprehend_response_cached"])
+
+    @patch("track_a_snomed.cloudwatch_monitor", None)
+    @patch("track_a_snomed.snomed_cache")
+    @patch("track_a_snomed.comprehend_medical")
+    @patch("track_a_snomed.detect_phi_entities")
+    def test_process_document_uses_cached_comprehend(self, mock_phi, mock_cm, mock_cache):
+        mock_phi.return_value = []
+        mock_cache.get.return_value = {
+            "Entities": [],
+            "ModelVersion": "cache-v1",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            p = os.path.join(temp_dir, "d_textract.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"Blocks": [{"BlockType": "LINE", "Text": "Patient has hypertension"}]}, f)
+            result = snomed.process_document(p)
+            self.assertTrue(result["comprehend_response_cached"])
+            mock_cm.infer_snomedct.assert_not_called()
 
     @patch("track_a_snomed.process_document")
     @patch("track_a_snomed.time.sleep")
