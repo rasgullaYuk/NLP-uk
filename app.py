@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import streamlit as st
 
 from audit_dynamodb import get_audit_logger, get_current_user
+from emis_export_integration import export_to_emis
 from lambda_confidence_aggregator import DEFAULT_THRESHOLD
 from review_interface_utils import (
     ACTION_PRIORITY_OPTIONS,
@@ -924,10 +925,21 @@ if c2.button("Approve All & Export to EMIS"):
             "snomed_entities": current_payload.get("snomed", {}).get("entities", []),
             "role_based_actions": current_payload.get("role_based_actions", {}),
         }
+        emis_result = export_to_emis(
+            document_id=selected_document,
+            validated_payload=export_payload,
+            user_id=current_user,
+            audit_logger=audit_logger,
+        )
         export_json = json.dumps(export_payload, indent=2)
         export_key = f"{selected_document}_emis_export_json"
         st.session_state[export_key] = export_json
-        st.success("Document approved. EMIS export payload ready for download.")
+        if emis_result.get("success"):
+            st.success("Document approved and exported to EMIS successfully.")
+        else:
+            st.warning(
+                "Document approved, but EMIS export failed and was queued for retry."
+            )
     except Exception as exc:
         st.error(f"Failed to approve/export: {exc}")
 
