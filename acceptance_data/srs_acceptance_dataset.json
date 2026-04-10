@@ -1,0 +1,155 @@
+{
+  "text_accuracy_cases": [
+    {
+      "document_id": "acc-doc-001",
+      "ground_truth": "Patient has hypertension and diabetes mellitus. Continue Metformin 500 mg twice daily.",
+      "extracted": "Patient has hypertension and diabetes mellitus. Continue Metformin 500 mg twice daily."
+    },
+    {
+      "document_id": "acc-doc-002",
+      "ground_truth": "Follow up in two weeks with cardiology. BP goal less than 130 over 80.",
+      "extracted": "Follow up in two weeks with cardiology. BP goal less than 130 over 80."
+    },
+    {
+      "document_id": "acc-doc-003",
+      "ground_truth": "No known drug allergies. Start atorvastatin 40 mg at bedtime.",
+      "extracted": "No known drug allergies. Start atorvastatin 40 mg at bedtime."
+    }
+  ],
+  "snomed_mapping_cases": [
+    {
+      "term": "Hypertension",
+      "expected_code": "38341003",
+      "predicted_code": "38341003"
+    },
+    {
+      "term": "Type 2 diabetes mellitus",
+      "expected_code": "44054006",
+      "predicted_code": "44054006"
+    },
+    {
+      "term": "Hyperlipidemia",
+      "expected_code": "55822004",
+      "predicted_code": "55822004"
+    },
+    {
+      "term": "Chest pain",
+      "expected_code": "29857009",
+      "predicted_code": "29857009"
+    },
+    {
+      "term": "Dyspnea",
+      "expected_code": "267036007",
+      "predicted_code": "267036007"
+    },
+    {
+      "term": "Myocardial infarction",
+      "expected_code": "22298006",
+      "predicted_code": "22298006"
+    },
+    {
+      "term": "Metformin therapy",
+      "expected_code": "860975",
+      "predicted_code": "860975"
+    },
+    {
+      "term": "Lisinopril therapy",
+      "expected_code": "10880891000119101",
+      "predicted_code": "10880891000119101"
+    },
+    {
+      "term": "Aspirin therapy",
+      "expected_code": "27658006",
+      "predicted_code": "27658006"
+    },
+    {
+      "term": "Clopidogrel therapy",
+      "expected_code": "373276003",
+      "predicted_code": "373276003"
+    },
+    {
+      "term": "Metoprolol therapy",
+      "expected_code": "387145006",
+      "predicted_code": "123456789"
+    },
+    {
+      "term": "Cardiology follow up",
+      "expected_code": "185389009",
+      "predicted_code": "185389009"
+    },
+    {
+      "term": "Blood pressure monitoring",
+      "expected_code": "410942007",
+      "predicted_code": "410942007"
+    },
+    {
+      "term": "Low sodium diet",
+      "expected_code": "226208002",
+      "predicted_code": "226208002"
+    },
+    {
+      "term": "Smoking history",
+      "expected_code": "266919005",
+      "predicted_code": "266919005"
+    },
+    {
+      "term": "Hospital discharge",
+      "expected_code": "306689006",
+      "predicted_code": "306689006"
+    },
+    {
+      "term": "Electrocardiogram finding",
+      "expected_code": "271921002",
+      "predicted_code": "271921002"
+    },
+    {
+      "term": "Troponin test",
+      "expected_code": "104847001",
+      "predicted_code": "104847001"
+    },
+    {
+      "term": "Echocardiography",
+      "expected_code": "40701008",
+      "predicted_code": "40701008"
+    },
+    {
+      "term": "Primary care visit",
+      "expected_code": "185316007",
+      "predicted_code": "185316007"
+    }
+  ],
+  "confidence_events": [
+    {
+      "document_id": "route-high-1",
+      "textract": 0.92,
+      "comprehend": 0.90,
+      "faiss": 0.87,
+      "llm_logprobs": 0.89,
+      "expected_route": "bypass_database"
+    },
+    {
+      "document_id": "route-high-2",
+      "textract": 0.86,
+      "comprehend": 0.87,
+      "faiss": 0.86,
+      "llm_logprobs": 0.88,
+      "expected_route": "bypass_database"
+    },
+    {
+      "document_id": "route-low-1",
+      "textract": 0.60,
+      "comprehend": 0.62,
+      "faiss": 0.58,
+      "llm_logprobs": 0.65,
+      "expected_route": "human_review"
+    },
+    {
+      "document_id": "route-low-2",
+      "textract": 0.80,
+      "comprehend": 0.81,
+      "faiss": 0.82,
+      "llm_logprobs": 0.83,
+      "expected_route": "human_review"
+    }
+  ]
+}
