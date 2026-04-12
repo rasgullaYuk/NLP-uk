@@ -26,9 +26,20 @@ AWS_KEY    = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
 
 def make_client(service):
-    return boto3.client(service, region_name=AWS_REGION,
-                        aws_access_key_id=AWS_KEY,
-                        aws_secret_access_key=AWS_SECRET)
+    # FIX (review comment 1): Only pass explicit credentials when BOTH are set.
+    # Passing None values bypasses boto3's default credential chain (IAM role,
+    # ~/.aws/credentials, instance metadata) and causes confusing auth failures.
+    client_kwargs = {"region_name": AWS_REGION}
+    if AWS_KEY and AWS_SECRET:
+        client_kwargs["aws_access_key_id"]     = AWS_KEY
+        client_kwargs["aws_secret_access_key"] = AWS_SECRET
+    elif AWS_KEY or AWS_SECRET:
+        raise ValueError(
+            "Incomplete AWS credential configuration: set both "
+            "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or neither "
+            "to allow boto3 to use its default credential chain."
+        )
+    return boto3.client(service, **client_kwargs)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE        = Path(__file__).parent
@@ -38,19 +49,14 @@ STATIC_DIR  = BASE / "portal_static"
 for d in [UPLOAD_DIR, RESULTS_DIR, STATIC_DIR]:
     d.mkdir(exist_ok=True)
 
-CONFIDENCE_THRESHOLD = 0.85  # global default
+# FIX (review comment 2): Import thresholds from the single source of truth in
+# config/document_type_config.py instead of duplicating them here.
+# This prevents drift between portal.py and the config module.
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent))
+from config.document_type_config import get_threshold as _get_threshold
 
-# OBS-004: Per-type confidence thresholds calibrated from dataset OCR quality analysis.
-# Ambulance and ophthalmology referral docs score lower due to multi-column tables and
-# all-caps text — a global 0.85 threshold would incorrectly flag them for manual review.
-CONFIDENCE_THRESHOLDS = {
-    "Ambulance Clinical Report":      0.72,
-    "Ophthalmology Referral":         0.75,
-    "ED Discharge Letter":            0.80,
-    "111 First ED Report":            0.78,
-    "Medication / Prescriber Letter": 0.80,  # Expert Health Q&A format
-    "default":                        0.85,
-}
+CONFIDENCE_THRESHOLD = 0.85  # global fallback (matches config default)
 
 # OBS-010: Arrival method codes from Frimley ED discharge letters.
 # Codes appear in brackets e.g. "Emergency Road Ambulance WITH Medical Escort [8]"
@@ -301,11 +307,10 @@ def compute_unified_confidence(textract_conf: float, snomed_conf: float, llm_con
 
 
 def get_confidence_threshold(letter_type: str) -> float:
-    """OBS-004: Return per-type confidence threshold.
-    Ambulance and ophthalmology referral docs legitimately score lower due to
-    multi-column table OCR — using a global 0.85 incorrectly flags them for review.
+    """OBS-004: Return per-type confidence threshold from config/document_type_config.py.
+    Single source of truth — thresholds are not duplicated here.
     """
-    return CONFIDENCE_THRESHOLDS.get(letter_type, CONFIDENCE_THRESHOLDS["default"])
+    return _get_threshold(letter_type)
 
 
 def extract_hospital_trust(text: str) -> str:
@@ -442,12 +447,8 @@ def infer_letter_type(text: str) -> str:
                               "do not eat after", "admission instructions", "day surgery unit",
                               "bring this letter with you"]):
         return "Pre-admission Letter"
-    # Antenatal Discharge Summary (prefix 7.) — specific maternity variant
-    if any(x in t for x in ["antenatal discharge", "estimate delivery date", "edd",
-                              "estimate gestational age", "ega", "gravida & parity",
-                              "reduced fetal movement", "mdau"]):
-        return "Antenatal Discharge Summary"
     # Haematology / oncology outpatient (prefix 10.)
+    # (Antenatal Discharge Summary check is earlier — before Maternity/Diabetes)
     if any(x in t for x in ["haematology", "myeloma", "multiple myeloma", "lenalidomide",
                               "bortezomib", "protein electrophoresis", "paraprotein"]):
         return "Haematology Outpatient Letter"
@@ -680,8 +681,10 @@ def extract_patient_info(text: str) -> dict:
 
 def extract_clinical_specifics(text: str, letter_type: str) -> dict:
     """
-    Extract type-specific clinical data for each of the 10 document types.
+    Extract type-specific clinical data for the supported document/letter types
+    identified by `letter_type` (e.g. from infer_letter_type()).
     Returns a dict of extra fields shown in the right panel and Coding tab.
+    Supported types are defined in config/document_type_config.py.
     """
     import re
     extras = {}
@@ -1311,10 +1314,10 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
     <!-- Details center panel -->
     <div class="details-panel">
       <div class="tabs">
-        <div class="tab active" onclick="showTab('details')">Details</div>
-        <div class="tab" onclick="showTab('coding')">Coding</div>
-        <div class="tab" onclick="showTab('followup')">Follow-up</div>
-        <div class="tab" onclick="showTab('gpactions')">GP Actions</div>
+        <div class="tab active" onclick="showTab(this,'details')">Details</div>
+        <div class="tab" onclick="showTab(this,'coding')">Coding</div>
+        <div class="tab" onclick="showTab(this,'followup')">Follow-up</div>
+        <div class="tab" onclick="showTab(this,'gpactions')">GP Actions</div>
       </div>
       <div class="tab-content">
 
@@ -1818,47 +1821,93 @@ function renderResult(data, file) {
   };
 }
 
+// FIX (review comment 7): Use safe DOM construction (textContent) instead of
+// innerHTML to prevent XSS from untrusted OCR/entity text returned by the pipeline.
 function renderChips(containerId, entities) {
   const el = document.getElementById(containerId);
-  if(!entities.length) { el.innerHTML = '<span style="color:var(--muted);font-size:12px">None identified</span>'; return; }
-  el.innerHTML = entities.map(e =>
-    `<span class="snomed-chip" title="${e.description}">
-      ${e.text} <span class="snomed-code">${e.snomed_code || '?'}</span>
-    </span>`
-  ).join('');
+  el.textContent = '';
+  if (!entities.length) {
+    const none = document.createElement('span');
+    none.style.cssText = 'color:var(--muted);font-size:12px';
+    none.textContent = 'None identified';
+    el.appendChild(none);
+    return;
+  }
+  entities.forEach(e => {
+    const chip = document.createElement('span');
+    chip.className = 'snomed-chip';
+    chip.title = e.description || '';
+    chip.textContent = e.text || '';
+    const code = document.createElement('span');
+    code.className = 'snomed-code';
+    code.textContent = ' ' + (e.snomed_code || '?');
+    chip.appendChild(code);
+    el.appendChild(chip);
+  });
 }
 
 function renderRightEntities(containerId, entities) {
   const el = document.getElementById(containerId);
-  if(!entities.length) { el.innerHTML = '<span style="color:var(--muted);font-size:13px">None identified</span>'; return; }
-  el.innerHTML = entities.map(e =>
-    `<div style="padding:4px 0;font-size:12px">
-      <span style="font-weight:600">${e.text}</span>
-      ${e.snomed_code ? `<span style="color:var(--muted)"> · ${e.snomed_code}</span>` : ''}
-    </div>`
-  ).join('');
+  el.textContent = '';
+  if (!entities.length) {
+    const none = document.createElement('span');
+    none.style.cssText = 'color:var(--muted);font-size:13px';
+    none.textContent = 'None identified';
+    el.appendChild(none);
+    return;
+  }
+  entities.forEach(e => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:4px 0;font-size:12px';
+    const name = document.createElement('span');
+    name.style.fontWeight = '600';
+    name.textContent = e.text || '';
+    row.appendChild(name);
+    if (e.snomed_code) {
+      const code = document.createElement('span');
+      code.style.color = 'var(--muted)';
+      code.textContent = ' \u00b7 ' + e.snomed_code;
+      row.appendChild(code);
+    }
+    el.appendChild(row);
+  });
 }
 
 function renderActions(containerId, text) {
   const el = document.getElementById(containerId);
-  if(!text) { el.innerHTML = '<span style="color:var(--muted);font-size:13px">No actions generated</span>'; return; }
+  el.textContent = '';
+  if (!text) {
+    const none = document.createElement('span');
+    none.style.cssText = 'color:var(--muted);font-size:13px';
+    none.textContent = 'No actions generated';
+    el.appendChild(none);
+    return;
+  }
   const lines = text.split('\n').filter(l => l.trim());
   let num = 0;
-  el.innerHTML = lines.map(l => {
+  lines.forEach(l => {
     const clean = l.replace(/^\d+[\.\)]\s*/, '').trim();
-    if(!clean) return '';
+    if (!clean) return;
     num++;
-    return `<div class="action-item">
-      <div class="action-num">${num}</div>
-      <div>${clean}</div>
-    </div>`;
-  }).join('');
+    const row = document.createElement('div');
+    row.className = 'action-item';
+    const numEl = document.createElement('div');
+    numEl.className = 'action-num';
+    numEl.textContent = String(num);
+    const txt = document.createElement('div');
+    txt.textContent = clean;
+    row.appendChild(numEl);
+    row.appendChild(txt);
+    el.appendChild(row);
+  });
 }
 
-function showTab(name) {
+// FIX (review comment 6): Accept the clicked element explicitly rather than
+// relying on the global `event.target` which is not reliable across all browsers.
+function showTab(el, name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  event.target.classList.add('active');
+  el.classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
 }
 
@@ -1921,12 +1970,16 @@ def process_document():
     try:
         result = run_full_pipeline(doc_id, save_path)
     except Exception as e:
+        # FIX (review comment 5): Log full traceback server-side only.
+        # Never return stack frames/paths to the browser — leaks internal details.
+        app.logger.exception("Document processing failed doc_id=%s filename=%s", doc_id, filename)
         result = {
-            "doc_id": doc_id,
-            "filename": filename,
-            "status": "error",
-            "error": str(e),
-            "traceback": traceback.format_exc(),
+            "doc_id":    doc_id,
+            "filename":  filename,
+            "status":    "error",
+            "error":     "An internal error occurred while processing the document.",
+            # error_detail only included when Flask debug mode is on (local dev only)
+            **({"error_detail": str(e)} if app.debug else {}),
         }
 
     # Persist result

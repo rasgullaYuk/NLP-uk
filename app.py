@@ -651,6 +651,9 @@ with right_col:
                     value=role_data.get("summary", ""),
                     disabled=True,
                     height=120,
+                    # FIX (review comment 8): stable key prevents stale values
+                    # when the user switches between documents.
+                    key=f"{selected_document}_{role}_original_summary_view",
                 )
 
                 st.text_area(
@@ -665,6 +668,9 @@ with right_col:
                     value=format_actions_for_text(role_data.get("follow_up_actions", [])),
                     disabled=True,
                     height=90,
+                    # FIX (review comment 8): stable key prevents stale values
+                    # when the user switches between documents.
+                    key=f"{selected_document}_{role}_original_actions_view",
                 )
 
                 st.text_area(

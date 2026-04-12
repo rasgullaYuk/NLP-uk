@@ -29,7 +29,7 @@
   },
 
   "document_type_taxonomy": {
-    "description": "20 distinct document types identified, grouped by prefix number used in clinic's filing system",
+    "description": "21 distinct document types identified, grouped by prefix number used in clinic's filing system",
     "prefix_map": {
       "1": ["Discharge Summary", "CAMHS Discharge Summary"],
       "2": ["Cancer Surveillance Letter", "HIV / GUM Clinic Letter", "Maternity / Diabetes Letter", "Surgical Outpatient Letter"],
@@ -207,8 +207,8 @@
     },
     {
       "id": "OBS-002",
-      "observation": "20 distinct document types across 9 prefix categories",
-      "action": "infer_letter_type() classifier with 20 type handlers + priority ordering",
+      "observation": "21 distinct document types across 9 prefix categories",
+      "action": "infer_letter_type() classifier with 21 type handlers + priority ordering",
       "location": "portal.py infer_letter_type()",
       "status": "implemented"
     },
@@ -224,7 +224,7 @@
       "observation": "Per-type confidence thresholds needed (ambulance/ophthalmology score lower due to tables)",
       "action": "compute_unified_confidence() should apply per-type thresholds",
       "location": "portal.py compute_unified_confidence() + CONFIDENCE_THRESHOLDS dict",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "OBS-005",
@@ -238,21 +238,21 @@
       "observation": "Expert Health pages 2-5 are lifestyle Q&A noise — clinical content only on page 1",
       "action": "For Medication/Prescriber Letter, limit Bedrock input to first 1500 chars (page 1 only)",
       "location": "portal.py run_bedrock_summarization()",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "OBS-007",
       "observation": "Safeguarding and bereavement markers must be protected in patient-facing summaries",
       "action": "Add sensitivity clause to patient_summary prompt",
       "location": "portal.py run_bedrock_summarization() patient_summary call",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "OBS-008",
       "observation": "Hospital trust can be identified from document header text",
       "action": "extract_hospital_trust() function to identify originating trust",
       "location": "portal.py (new helper function)",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "OBS-009",
@@ -266,7 +266,7 @@
       "observation": "Arrival method codes in Frimley ED letters have semantic meaning",
       "action": "ARRIVAL_METHOD_CODES lookup dict for human-readable descriptions",
       "location": "portal.py (new constant)",
-      "status": "pending"
+      "status": "done"
     }
   ]
 }

@@ -1,7 +1,7 @@
 """
 document_type_config.py
 ------------------------
-Central registry of all 20 document types identified from the 40-document
+Central registry of all 21 document types identified from the 40-document
 clinical dataset (Batches 1–5, April 2026).
 
 This module is the single source of truth for:
@@ -283,5 +283,5 @@ def is_sensitive_type(letter_type: str) -> bool:
 
 
 def all_type_names() -> List[str]:
-    """Return all 20 registered document type names."""
+    """Return all 21 registered document type names."""
     return list(DOCUMENT_TYPES.keys())
