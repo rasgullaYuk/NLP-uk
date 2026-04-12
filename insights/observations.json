@@ -1,0 +1,272 @@
+{
+  "meta": {
+    "generated": "2026-04-12",
+    "dataset_size": 40,
+    "batches": 5,
+    "analyst": "Claude Sonnet 4.6",
+    "purpose": "Permanent record of dataset patterns for pipeline calibration and model guidance"
+  },
+
+  "corpus_overview": {
+    "source_practice": {
+      "name": "Easthampstead Surgery",
+      "ods_code": "K81087",
+      "address": "23 Rectory Lane, Easthampstead, Bracknell, Berkshire RG12 7BB",
+      "gp": "Dr Marshall / Dr Tj Keeling & Partners",
+      "insight": "All 40 documents flow to a single GP practice. In production, multi-practice routing will be needed."
+    },
+    "originating_trusts": [
+      "Frimley Health NHS Foundation Trust (Frimley Park, Wexham Park, Heatherwood)",
+      "Royal Berkshire Hospital NHS Foundation Trust",
+      "Berkshire Healthcare NHS Foundation Trust (Prospect Park Hospital)",
+      "South Central Ambulance Service (SCAS) NHS Foundation Trust",
+      "University Hospital Southampton NHS Foundation Trust",
+      "Kettering General Hospital NHS Foundation Trust",
+      "Evolutio Care Innovations Ltd (ophthalmology referral management)",
+      "Expert Health Ltd (online GLP-1 prescribing service)"
+    ],
+    "format": "ALL 40 documents are scanned PDFs — no embedded text. AWS Textract OCR is mandatory for every document."
+  },
+
+  "document_type_taxonomy": {
+    "description": "20 distinct document types identified, grouped by prefix number used in clinic's filing system",
+    "prefix_map": {
+      "1": ["Discharge Summary", "CAMHS Discharge Summary"],
+      "2": ["Cancer Surveillance Letter", "HIV / GUM Clinic Letter", "Maternity / Diabetes Letter", "Surgical Outpatient Letter"],
+      "3": ["111 First ED Report"],
+      "4": ["ED Discharge Letter"],
+      "5": ["Ambulance Clinical Report"],
+      "6": ["Renal / Nephrology Letter", "Paediatric Cardiology Letter", "Medication / Prescriber Letter"],
+      "7": ["Mental Health Inpatient Discharge", "Antenatal Discharge Summary", "Early Pregnancy / Gynaecology Letter", "Pre-admission Letter"],
+      "8": ["Ophthalmology Letter"],
+      "9": ["Ophthalmology Referral", "ED Discharge Letter (variant)", "Medication / Prescriber Letter (variant)"],
+      "10": ["Psychiatry Outpatient Letter", "Haematology Outpatient Letter", "Procedure Report", "Outpatient Letter"]
+    },
+    "volume_distribution": {
+      "emergency_urgent": "~30% (ED discharge, ambulance, 111, pre-admission)",
+      "ophthalmology": "~15% (medical retina, evolutio referral) — driven by diabetic eye disease",
+      "mental_health": "~12% (MH inpatient discharge, CAMHS, psychiatry outpatient, ambulance MH crisis)",
+      "chronic_disease_management": "~20% (renal, haematology, HIV, cancer surveillance)",
+      "obstetric_gynaecology": "~8% (antenatal discharge, early pregnancy/EPAU)",
+      "prescribing_weight_management": "~10% (Expert Health GLP-1: Mounjaro, Wegovy, Semaglutide)",
+      "primary_referrals": "~5% (paediatric cardiology, ophthalmology referral)"
+    }
+  },
+
+  "field_extraction_patterns": {
+    "nhs_number_formats": [
+      "Spaced 3-3-4: '456 956 5328' (most common — Frimley, RBH, SCAS)",
+      "Labelled inline: 'NHS No: 456 956 5328'",
+      "Labelled next-line: 'NHS Number\\n462 213 3695' (111 reports)",
+      "Inline in footer: 'NHS Number: 476 028 2297, SURNAME, Forename' (SCAS reports)"
+    ],
+    "patient_name_formats": [
+      "Re: SURNAME, Forename (Frimley standard)",
+      "Name: SURNAME, Forename (RBH Patient Discharge Letter)",
+      "Patient Name: Forename SURNAME (Frimley outpatient letters)",
+      "Re: MR/MRS/MISS Forename SURNAME (Expert Health)",
+      "Patient Forename / Patient Surname separate fields (SCAS v3.62)",
+      "SURNAME, Forename in body: 'Dear Mr Forename SURNAME' (RBH outpatient)",
+      "Standalone SURNAME, Forename line (111 First ED Report)"
+    ],
+    "dob_formats": [
+      "DD/MM/YYYY (most common)",
+      "DD-MMM-YYYY e.g. '16 Jan 1996', '23-Jun-1981' (Kettering ED, SCAS)",
+      "DD.MM.YYYY (occasional)",
+      "Born DD-MMM-YYYY (111 First ED)"
+    ],
+    "date_formats_general": [
+      "DD/MM/YYYY",
+      "DD/MM/YY (short year — Frimley)",
+      "DD-MMM-YYYY",
+      "DD MMMM YYYY",
+      "YYYY-MM-DD (ISO — some system exports)"
+    ],
+    "hospital_number_formats": [
+      "MRN: 7-digit (Frimley e.g. 11115790)",
+      "MRN Number: 7-digit (RBH e.g. 5216236)",
+      "Hospital Number: 8-digit (Frimley outpatient e.g. 10848071)",
+      "Hospital no. 9-digit (RBH ophthalmology e.g. 005203351)",
+      "Referral ID Number: (Evolutio system e.g. 1928141)"
+    ]
+  },
+
+  "clinical_data_patterns": {
+    "diabetic_eye_disease_cluster": {
+      "observation": "4 out of 4 ophthalmology letters relate to diabetic retinopathy — the dominant chronic condition in this practice",
+      "grading_system": "NHS DR grading: R0-R3A, M0-M1, P0-P1 (e.g. R2M1P0 = moderate DR + maculopathy, no PRP)",
+      "iop_format": "Right X mmHg, Left Y mmHg",
+      "va_format": "Snellen 6/X or decimal e.g. 0.64 (6/24) or complog e.g. 6/8.7",
+      "treatment_codes": ["PRP (panretinal photocoagulation)", "NVD/NVE laser", "Intravitreal injection"],
+      "code_impact": "Ophthalmology Letter and Ophthalmology Referral types must extract DR grade, VA, IOP, and PRP status"
+    },
+    "glp1_weight_management_cluster": {
+      "observation": "3 Expert Health documents all prescribe GLP-1 agonists for weight loss",
+      "drugs_seen": ["Mounjaro (tirzepatide) KwikPen 5mg, 7.5mg", "Wegovy (semaglutide) FlexTouch 1mg"],
+      "format": "Q&A consultation transcript (20+ questions), pages 2-5 contain non-clinical lifestyle advice",
+      "code_impact": "Pages 2+ of Expert Health docs should be summarised — not skipped — but clinical content is only on page 1"
+    },
+    "ambulance_report_structure": {
+      "versions": ["GP Report for Information v4.7.1 (simple, 2 pages)", "GP Patient Report v3.62 (detailed, 6-9 pages)"],
+      "v3_62_page_structure": {
+        "page1": "Patient demographics, GP details, incident details, crew, consent",
+        "page2": "Main symptom, PMH, medications, NEWS2/POPS scores",
+        "page3": "Social history, safety netting",
+        "page4": "Vital signs time-series table",
+        "page5": "GCS, circulation, airway assessment",
+        "page6": "Full body examination, working impression, plan, conveyance decision"
+      },
+      "key_clinical_fields": ["NEWS2 Score", "POPS Score", "GCS", "ACVPU", "Conveyance decision", "Working Impression", "Differential Diagnosis"]
+    },
+    "ed_discharge_variants": {
+      "frimley_format": "NHS Trust header + 'Discharge Summary' + attendance/arrival method codes in brackets",
+      "rbh_format": "'Patient Discharge Letter' header + MRN as primary ID + detailed medication table",
+      "kettering_format": "ED letter format with 'Clinical Summary' narrative block + diagnosis + procedures",
+      "arrival_method_codes": {
+        "3": "Police Transport",
+        "8": "Emergency Road Ambulance WITH Medical Escort",
+        "15": "Patient arranged own transport / walk-in",
+        "1": "Self Referral (RBH format)"
+      }
+    },
+    "mental_health_specifics": {
+      "inpatient_discharge": {
+        "legal_status_fields": ["Section 2", "Section 3", "Informal", "Discharged from Section 2"],
+        "community_services": ["CRHTT (Crisis Resolution Home Treatment Team)", "CMHT (Community Mental Health Team)", "IAPT/Talking Therapies"],
+        "high_risk_indicators": ["overdose", "command hallucinations", "suicidal ideation", "safeguarding referral"]
+      },
+      "ambulance_mh": {
+        "nature_of_call_codes": ["C4 mental health c4", "C4 trauma specify"],
+        "mental_capacity_act": "MCA 2005 S5/S6 consent documented on SCAS v3.62 page 1"
+      }
+    },
+    "obstetric_fields": {
+      "edd_ega": "Always present in antenatal discharge — EDD format: DD/MM/YY or DD-MMM-YYYY",
+      "gravida_parity": "G3 P1 format (Gravida = total pregnancies, Para = births past 24 weeks)",
+      "complications_seen": ["Reduced fetal movement", "Poppy (bereavement flag)", "Neonatal death in history"],
+      "safeguarding_note": "Bereavement marker 'Poppy' and neonatal death are sensitive — must NOT appear in patient-facing summaries"
+    }
+  },
+
+  "data_quality_observations": {
+    "ocr_confidence_by_type": {
+      "high_confidence_expected": ["Frimley outpatient letters (clean laser print)", "RBH discharge letters", "Expert Health (digital PDF scan)"],
+      "medium_confidence_expected": ["SCAS reports (multi-column tables, handwritten crew details)", "Evolutio ophthalmology referrals (complex prescription tables)"],
+      "lower_confidence_expected": ["111 First ED reports (dense text, small font)", "Kettering ED letters (mixed font sizes)"]
+    },
+    "multi_page_handling": {
+      "critical_pages": {
+        "SCAS v3.62": "Page 6 contains the clinical conclusion (examination + plan + conveyance) — must not stop at page 1",
+        "Expert_Health": "Page 1 contains all clinical data — pages 2-5 are Q&A lifestyle content",
+        "MH_Inpatient": "Page 2 contains medications at discharge — page 3 has past psychiatric history",
+        "Ophthalmology_RBH": "Page 2 contains fundus exam findings and plan",
+        "Evolutio_Referral": "Pages 2-3 contain optometrist prescription table and triage notes"
+      },
+      "recommendation": "For SCAS v3.62, concatenate ALL pages. For Expert Health, use only page 1 for clinical extraction."
+    },
+    "noise_fields_to_filter": [
+      "Expert Health Q&A lifestyle questions (dietary advice, exercise tips, sleep questions)",
+      "SCAS vehicle crew PIN numbers",
+      "Frimley footer (Ministry of Defence partnership, registered office)",
+      "RBH footer (patient portal QR code, www.nhs.uk/comment)",
+      "Evolutio footer (registration number, Newtown House address)"
+    ],
+    "confidence_threshold_calibration": {
+      "current_threshold": 0.85,
+      "recommendation": "Ambulance and ophthalmology referral docs routinely score 0.70-0.80 due to table-heavy OCR — consider per-type thresholds",
+      "proposed_per_type_thresholds": {
+        "Ambulance Clinical Report": 0.72,
+        "Ophthalmology Referral": 0.75,
+        "ED Discharge Letter": 0.80,
+        "default": 0.85
+      }
+    }
+  },
+
+  "safeguarding_and_sensitivity": {
+    "high_sensitivity_indicators": [
+      "'Poppy' bereavement marker — neonatal/infant death",
+      "Neonatal death in medical history",
+      "Safeguarding referral submitted to Adult/Children's Social Care",
+      "Mental Capacity Act S5/S6 invoked",
+      "Police referral as source of attendance",
+      "Overdose with ICU admission",
+      "Command hallucinations / suicidal ideation"
+    ],
+    "patient_summary_exclusion_rule": "High-sensitivity indicators must NOT appear verbatim in patient-facing summaries — they must be paraphrased or omitted",
+    "code_location": "run_bedrock_summarization() patient_summary prompt must include sensitivity instruction"
+  },
+
+  "actionable_code_improvements": [
+    {
+      "id": "OBS-001",
+      "observation": "All 40 docs are scanned PDFs with no embedded text",
+      "action": "Textract is correctly mandatory — no fallback to pdfplumber needed",
+      "location": "portal.py run_full_pipeline()",
+      "status": "implemented"
+    },
+    {
+      "id": "OBS-002",
+      "observation": "20 distinct document types across 9 prefix categories",
+      "action": "infer_letter_type() classifier with 20 type handlers + priority ordering",
+      "location": "portal.py infer_letter_type()",
+      "status": "implemented"
+    },
+    {
+      "id": "OBS-003",
+      "observation": "Type-specific clinical fields differ significantly per document type",
+      "action": "extract_clinical_specifics() dispatches per-type regex extraction",
+      "location": "portal.py extract_clinical_specifics()",
+      "status": "implemented"
+    },
+    {
+      "id": "OBS-004",
+      "observation": "Per-type confidence thresholds needed (ambulance/ophthalmology score lower due to tables)",
+      "action": "compute_unified_confidence() should apply per-type thresholds",
+      "location": "portal.py compute_unified_confidence() + CONFIDENCE_THRESHOLDS dict",
+      "status": "pending"
+    },
+    {
+      "id": "OBS-005",
+      "observation": "SCAS v3.62 page 6 contains clinical conclusion — must process all pages",
+      "action": "run_full_pipeline() already concatenates all pages via pdf_to_images()",
+      "location": "portal.py run_full_pipeline()",
+      "status": "implemented"
+    },
+    {
+      "id": "OBS-006",
+      "observation": "Expert Health pages 2-5 are lifestyle Q&A noise — clinical content only on page 1",
+      "action": "For Medication/Prescriber Letter, limit Bedrock input to first 1500 chars (page 1 only)",
+      "location": "portal.py run_bedrock_summarization()",
+      "status": "pending"
+    },
+    {
+      "id": "OBS-007",
+      "observation": "Safeguarding and bereavement markers must be protected in patient-facing summaries",
+      "action": "Add sensitivity clause to patient_summary prompt",
+      "location": "portal.py run_bedrock_summarization() patient_summary call",
+      "status": "pending"
+    },
+    {
+      "id": "OBS-008",
+      "observation": "Hospital trust can be identified from document header text",
+      "action": "extract_hospital_trust() function to identify originating trust",
+      "location": "portal.py (new helper function)",
+      "status": "pending"
+    },
+    {
+      "id": "OBS-009",
+      "observation": "DR grading (R0-R3A M0-M1 P0-P1) is a structured data field in ophthalmology letters",
+      "action": "extract_clinical_specifics() already extracts retinopathy grade for Ophthalmology Letter type",
+      "location": "portal.py extract_clinical_specifics()",
+      "status": "implemented"
+    },
+    {
+      "id": "OBS-010",
+      "observation": "Arrival method codes in Frimley ED letters have semantic meaning",
+      "action": "ARRIVAL_METHOD_CODES lookup dict for human-readable descriptions",
+      "location": "portal.py (new constant)",
+      "status": "pending"
+    }
+  ]
+}

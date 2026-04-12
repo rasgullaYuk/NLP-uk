@@ -10,7 +10,7 @@ AWS_REGION = "us-east-1"
 
 # Pinned exact model version — NO aliasing (e.g., "sonnet" shorthand) allowed.
 # Update this string if the model version is superseded.
-BEDROCK_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v1:0"
+BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 

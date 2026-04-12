@@ -561,7 +561,6 @@ st.slider(
     "Override unified confidence score",
     min_value=0.0,
     max_value=1.0,
-    value=float(st.session_state[override_score_key]),
     step=0.01,
     key=override_score_key,
     disabled=st.session_state[confidence_mode_key] != "Override unified score",
@@ -652,7 +651,6 @@ with right_col:
                     value=role_data.get("summary", ""),
                     disabled=True,
                     height=120,
-                    key=f"{selected_document}_{role}_original_summary_view",
                 )
 
                 st.text_area(
@@ -667,7 +665,6 @@ with right_col:
                     value=format_actions_for_text(role_data.get("follow_up_actions", [])),
                     disabled=True,
                     height=90,
-                    key=f"{selected_document}_{role}_original_actions_view",
                 )
 
                 st.text_area(
@@ -729,7 +726,6 @@ with right_col:
                         selected_category = st.selectbox(
                             f"Mapped Category - {entity_id}",
                             category_options,
-                            index=category_options.index(current_category),
                             key=category_key,
                         )
                         st.text_input(f"SNOMED Code - {entity_id}", key=code_key)
