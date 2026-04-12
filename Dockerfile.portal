@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# System dependencies for PyMuPDF and OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgl1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements_portal.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements_portal.txt
+
+# Copy only what portal.py needs
+COPY portal.py .
+COPY config/ ./config/
+COPY document_handler.py .
+COPY preprocessing.py .
+COPY hipaa_compliance.py .
+COPY insights/ ./insights/
+
+# Render/Railway/HuggingFace use the PORT env variable
+# Default to 5000 for local dev
+ENV PORT=5000
+
+EXPOSE $PORT
+
+CMD ["sh", "-c", "python portal.py"]

@@ -2066,6 +2066,12 @@ function resetUpload() {
 </html>
 """
 
+@app.route("/health")
+def health():
+    """Health check endpoint — used by Render, Railway, and other PaaS platforms."""
+    return jsonify({"status": "ok", "service": "NLP-UK Clinical Portal"})
+
+
 @app.route("/")
 def index():
     return render_template_string(HTML)
@@ -2121,5 +2127,6 @@ def get_result(doc_id):
 
 
 if __name__ == "__main__":
-    print("Starting Clinical Document Portal on http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Starting Clinical Document Portal on http://0.0.0.0:{port}")
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
