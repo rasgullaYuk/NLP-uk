@@ -256,8 +256,17 @@ Extracted clinical entities:
 - Diagnoses: {', '.join(diagnoses) or 'None identified'}"""
 
     def call_claude(prompt: str, max_tokens: int = 500) -> str:
-        # Tell Claude explicitly to avoid markdown so summaries render cleanly
-        clean_prompt = prompt + "\n\nIMPORTANT: Write in plain prose only. Do NOT use markdown formatting — no asterisks, no bold (**), no bullet dashes, no numbered lists with dots. Use plain sentences and line breaks only."
+        # Explicit no-markdown system instruction prepended to every prompt.
+        # Claude on Bedrock respects this reliably when placed at the start.
+        system_instruction = (
+            "You are a clinical documentation assistant. "
+            "STRICT RULE: Output plain text only. "
+            "Do NOT use any markdown formatting whatsoever: "
+            "no # headers, no ** bold, no * italic, no bullet dashes (-), "
+            "no numbered lists with dots, no horizontal rules (---). "
+            "Use plain sentences separated by line breaks only."
+        )
+        clean_prompt = system_instruction + "\n\n" + prompt
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": max_tokens,
@@ -265,10 +274,12 @@ Extracted clinical entities:
         })
         resp = client.invoke_model(modelId=MODEL, body=body, contentType="application/json")
         raw = json.loads(resp["body"].read())["content"][0]["text"].strip()
-        # Strip any residual markdown just in case
+        # Belt-and-suspenders: strip any residual markdown Claude ignored
         import re as _re
-        clean = _re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', raw)  # remove **bold** / *italic*
-        clean = _re.sub(r'^#{1,3}\s+', '', clean, flags=_re.MULTILINE)  # remove # headers
+        clean = _re.sub(r'\*{1,2}([^*\n]+)\*{1,2}', r'\1', raw)  # **bold** / *italic*
+        clean = _re.sub(r'^#{1,3}\s+', '', clean, flags=_re.MULTILINE)  # ## headers
+        clean = _re.sub(r'^[-–—]{3,}\s*$', '', clean, flags=_re.MULTILINE)  # --- dividers
+        clean = clean.strip()
         return clean
 
     # ── Type-specific clinician prompt ─────────────────────────────────────────
@@ -759,14 +770,23 @@ def extract_patient_info(text: str) -> dict:
             if m: info["gravida_parity"] = m.group(1).replace(" ", "")
 
         # ── EDD (Estimated Delivery Date) ─────────────────────────────────────
+        # Skip any parenthetical abbreviation e.g. "(EDD)" before the actual date
         if not info["edd"]:
-            m = re.search(r'(?i)(?:EDD|Estimate Delivery Date)[:\s]+([^\n]{3,20})', l)
-            if m: info["edd"] = m.group(1).strip()
+            m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})', l)
+            if not m:  # date may be on next line — try broader capture
+                m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+([^\n(]{3,20})', l)
+            if m:
+                val = m.group(1).strip().rstrip(')')
+                if val and not val.lower().startswith('('):
+                    info["edd"] = val
 
         # ── EGA (Estimated Gestational Age) ───────────────────────────────────
         if not info["gestational_age"]:
-            m = re.search(r'(?i)(?:EGA|Estimate Gestational Age|Gestational Age)[:\s]+([^\n]{3,20})', l)
-            if m: info["gestational_age"] = m.group(1).strip()
+            m = re.search(r'(?i)(?:EGA|Estimated?\s+Gestational\s+Age|Gestational\s+Age)(?:\s*\([^)]*\))?\s*[:\s]+(\d[^\n(]{2,20})', l)
+            if m:
+                val = m.group(1).strip().rstrip(')')
+                if val:
+                    info["gestational_age"] = val
 
         # ── Expert Health format: name/DOB in letter body "Re: MR/MISS Name" ─
         if not info["name"]:
@@ -955,10 +975,20 @@ def extract_clinical_specifics(text: str, letter_type: str) -> dict:
 
     # ── Antenatal Discharge Summary ───────────────────────────────────────────
     if "Antenatal" in letter_type:
-        m = re.search(r'(?i)(?:EDD|Estimate Delivery Date)[:\s]+([^\n]{3,20})', t)
-        if m: extras["edd"] = m.group(1).strip()
-        m = re.search(r'(?i)(?:EGA|Estimate Gestational Age)[:\s]+([^\n]{3,20})', t)
-        if m: extras["gestational_age"] = m.group(1).strip()
+        # EDD — skip any "(EDD)" parenthetical, capture the actual date value
+        m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})', t)
+        if not m:
+            m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+([^\n(]{3,20})', t)
+        if m:
+            val = m.group(1).strip().rstrip(')')
+            if val and not val.lower().startswith('('):
+                extras["edd"] = val
+        # EGA — skip "(EGA)" parenthetical, capture weeks+days e.g. "29+1 weeks"
+        m = re.search(r'(?i)(?:EGA|Estimated?\s+Gestational\s+Age)(?:\s*\([^)]*\))?\s*[:\s]+(\d[^\n(]{2,20})', t)
+        if m:
+            val = m.group(1).strip().rstrip(')')
+            if val:
+                extras["gestational_age"] = val
         m = re.search(r'(?i)Gravida\s*&?\s*Parity[:\s]+([^\n]{2,10})', t)
         if m: extras["gravida_parity"] = m.group(1).strip()
         m = re.search(r'(?i)reason for (?:visit|admission)[:\s]+([^\n]{5,150})', t)
@@ -2015,17 +2045,29 @@ function renderResult(data, file) {
     specsSection.style.display = 'none';
   }
 
-  // Pipeline stages
+  // Pipeline stages — show status, confidence where available, error reason for partial/error
   const stages = data.pipeline_stages || {};
   document.getElementById('pipeline-stages-display').innerHTML =
-    Object.entries(stages).map(([k,v]) =>
-      `<div style="display:flex;justify-content:space-between;padding:2px 0">
-        <span>${k}</span>
-        <span style="color:${v.status==='done'?'var(--nhs-green)':v.status==='error'?'var(--nhs-red)':'var(--muted)'}">
-          ${v.status} ${v.confidence !== undefined ? '('+Math.round(v.confidence*100)+'%)' : ''}
-        </span>
-      </div>`
-    ).join('');
+    Object.entries(stages).map(([k,v]) => {
+      const isDone    = v.status === 'done';
+      const isPartial = v.status === 'partial';
+      const isError   = v.status === 'error';
+      const isSkipped = v.status === 'skipped';
+      const color = isDone ? 'var(--nhs-green)'
+                  : isPartial ? '#d67e00'
+                  : isError ? 'var(--nhs-red)'
+                  : 'var(--muted)';
+      const confTxt = v.confidence !== undefined ? ' (' + Math.round(v.confidence*100) + '%)' : '';
+      const errTxt  = (isPartial || isError) && v.error
+        ? `<div style="font-size:10px;color:#c0392b;margin-top:1px;word-break:break-word">${v.error}</div>`
+        : '';
+      return `<div style="padding:3px 0;border-bottom:1px solid #edf1f7">
+        <div style="display:flex;justify-content:space-between">
+          <span style="font-weight:600;font-size:12px">${k}</span>
+          <span style="color:${color};font-size:12px">${v.status}${confTxt}</span>
+        </div>${errTxt}
+      </div>`;
+    }).join('');
 
   // Download button
   document.getElementById('btn-download').onclick = () => {
@@ -2253,22 +2295,25 @@ function mdToHtml(text) {
     .replace(/>/g, '&gt;');
 
   let html = escaped
+    // ### and ## section headers → styled block (before bold so ** inside headers work)
+    .replace(/^#{3}\s+(.+)$/gm, '<strong style="display:block;margin:10px 0 3px;font-size:12px;color:#005eb8;text-transform:uppercase;letter-spacing:.4px">$1</strong>')
+    .replace(/^#{1,2}\s+(.+)$/gm, '<strong style="display:block;margin:10px 0 4px;font-size:13px;color:#003087">$1</strong>')
     // **bold** → <strong>
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     // *italic* → <em>
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
     // Numbered list items: "1. text" or "1) text"
-    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li>$1</li>')
+    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li style="margin:3px 0">$1</li>')
     // Bullet list items: "- text" or "* text"
-    .replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
-    // Wrap consecutive <li> blocks in <ol> / <ul>
-    .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul style="margin:6px 0 6px 16px;padding:0">' + m + '</ul>')
+    .replace(/^[\-\u2022]\s+(.+)$/gm, '<li style="margin:3px 0">$1</li>')
+    // Wrap consecutive <li> blocks in <ul>
+    .replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => '<ul style="margin:6px 0 6px 16px;padding:0;list-style:disc">' + m + '</ul>')
     // Double newline → paragraph break
-    .replace(/\n{2,}/g, '</p><p style="margin:6px 0">')
+    .replace(/\n{2,}/g, '</p><p style="margin:5px 0">')
     // Single newline → line break
     .replace(/\n/g, '<br>');
 
-  return '<p style="margin:0">' + html + '</p>';
+  return '<div style="line-height:1.55;font-size:13px">' + html + '</div>';
 }
 
 function setText(id, text) {
