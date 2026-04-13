@@ -1907,13 +1907,22 @@ function renderResult(data, file) {
   const snomedProbs = (data.snomed||{}).problems   || [];
   const snomedMeds  = (data.snomed||{}).medications|| [];
   const snomedDx    = (data.snomed||{}).diagnoses  || [];
-  renderSnomedTable(snomedProbs, snomedMeds, snomedDx);
+  const trackA      = (data.pipeline_stages||{}).track_a || {};
+  const trackAError = trackA.error || null;
+  // Fallbacks: locally extracted ICD codes and raw medications (always available, no AWS needed)
+  const icdFallback  = data.icd_codes        || [];
+  const medsFallback = data.medications_raw  || [];
+  renderSnomedTable(snomedProbs, snomedMeds, snomedDx, icdFallback, medsFallback, trackAError);
   // Header confidence badge
-  const snomedConf = data.pipeline_stages && data.pipeline_stages.track_a
-    ? data.pipeline_stages.track_a.confidence : null;
+  const snomedConf = trackA.confidence != null ? trackA.confidence : null;
   const snomedBadge = document.getElementById('snomed-conf-badge');
-  if (snomedBadge && snomedConf !== null) {
-    snomedBadge.textContent = 'AWS Comprehend · conf ' + (snomedConf*100).toFixed(0) + '%';
+  if (snomedBadge) {
+    if (snomedConf !== null) {
+      snomedBadge.textContent = 'AWS Comprehend · conf ' + (snomedConf*100).toFixed(0) + '%';
+    } else if (trackAError) {
+      snomedBadge.textContent = 'Comprehend unavailable — showing local extraction';
+      snomedBadge.style.color = '#ffd97d';
+    }
   }
 
   // ICD chips
@@ -2087,85 +2096,127 @@ function renderResult(data, file) {
 }
 
 // ── SNOMED CT Mapping Table ───────────────────────────────────────────────────
-// Renders a proper table in the dedicated SNOMED card on the Details tab.
-// Categories: problems (red), diagnoses (green), medications (blue).
-// Each row shows: category badge | clinical term | SNOMED code | description | confidence %.
-function renderSnomedTable(problems, medications, diagnoses) {
-  const tbody = document.getElementById('snomed-table-body');
-  const emptyMsg = document.getElementById('snomed-empty');
+// Always shows something:
+//  1. AWS Comprehend Medical SNOMED entities (preferred — problems/diagnoses/medications with codes)
+//  2. If Comprehend failed/empty: falls back to locally-extracted ICD codes + raw medications
+// Each row: category badge | clinical term | code | description | confidence
+function renderSnomedTable(problems, medications, diagnoses, icdFallback, medsFallback, comprehendError) {
+  const tbody      = document.getElementById('snomed-table-body');
+  const emptyMsg   = document.getElementById('snomed-empty');
   const countBadge = document.getElementById('snomed-count-badge');
+  const cardHeader = document.querySelector('#snomed-card > div:first-child');
   if (!tbody) return;
 
-  // Annotate each entity with its display category
-  const rows = [
-    ...problems.map(e  => ({ ...e, _cat: 'Problem',    _color: '#c0392b', _bg: '#fdf2f2' })),
-    ...diagnoses.map(e => ({ ...e, _cat: 'Diagnosis',  _color: '#1a6636', _bg: '#f2faf5' })),
-    ...medications.map(e=>({ ...e, _cat: 'Medication', _color: '#1a4fa0', _bg: '#f2f5fc' })),
+  // Build rows from AWS Comprehend entities
+  let rows = [
+    ...problems.map(e   => ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Problem',    _color: '#c0392b', _bg: '#fdf2f2', _source: 'SNOMED CT' })),
+    ...diagnoses.map(e  => ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Diagnosis',  _color: '#1a6636', _bg: '#f2faf5', _source: 'SNOMED CT' })),
+    ...medications.map(e=> ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Medication', _color: '#1a4fa0', _bg: '#f2f5fc', _source: 'SNOMED CT' })),
   ];
 
-  // Update count badge
-  if (countBadge) countBadge.textContent = rows.length + (rows.length === 1 ? ' entity' : ' entities');
+  // ── Fallback: local extraction when Comprehend returned nothing ─────────────
+  const usingFallback = rows.length === 0;
+  if (usingFallback) {
+    // ICD codes — locally extracted by regex, always available
+    (icdFallback || []).forEach(code => {
+      rows.push({ text: code, code: code, desc: 'ICD-10 code (locally extracted)', conf: null,
+                  _cat: 'ICD Code', _color: '#6a4e9e', _bg: '#f5f0fc', _source: 'Local' });
+    });
+    // Raw medications — locally extracted by dosage-pattern regex
+    (medsFallback || []).forEach(m => {
+      rows.push({ text: m.name, code: null, desc: m.dose || 'medication', conf: null,
+                  _cat: 'Medication', _color: '#1a4fa0', _bg: '#f2f5fc', _source: 'Local' });
+    });
+    // Update header to signal fallback mode
+    if (cardHeader && comprehendError) {
+      const note = cardHeader.querySelector('#snomed-fallback-note');
+      if (!note) {
+        const n = document.createElement('div');
+        n.id = 'snomed-fallback-note';
+        n.style.cssText = 'background:#d67e00;color:#fff;font-size:10px;padding:3px 12px;text-align:center';
+        n.textContent = '⚠ AWS Comprehend unavailable — showing locally extracted codes. Error: ' + comprehendError;
+        cardHeader.parentElement.insertBefore(n, cardHeader.nextSibling);
+      }
+    }
+  }
+
+  // Count badge
+  if (countBadge) {
+    const label = usingFallback ? ' local codes' : (rows.length === 1 ? ' entity' : ' entities');
+    countBadge.textContent = rows.length + label;
+    if (usingFallback) countBadge.style.background = 'rgba(214,126,0,0.6)';
+  }
 
   tbody.textContent = '';  // safe clear
 
   if (!rows.length) {
-    if (emptyMsg) emptyMsg.style.display = '';
-    tbody.style.display = 'none';
+    if (emptyMsg) { emptyMsg.style.display = ''; }
+    tbody.parentElement.style.display = 'none';
     return;
   }
   if (emptyMsg) emptyMsg.style.display = 'none';
-  tbody.style.display = '';
+  tbody.parentElement.style.display = '';
 
   rows.forEach((e, idx) => {
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid #edf1f7;' + (idx % 2 === 0 ? 'background:#fff' : 'background:#fafbfc');
 
-    // Category badge cell
+    // ── Category badge ────────────────────────────────────────────────────────
     const tdCat = document.createElement('td');
-    tdCat.style.cssText = 'padding:7px 10px;vertical-align:middle';
+    tdCat.style.cssText = 'padding:7px 10px;vertical-align:middle;white-space:nowrap';
     const badge = document.createElement('span');
-    badge.style.cssText = `display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;color:${e._color};background:${e._bg};border:1px solid ${e._color}30;white-space:nowrap`;
+    badge.style.cssText = `display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;color:${e._color};background:${e._bg};border:1px solid ${e._color}30`;
     badge.textContent = e._cat;
     tdCat.appendChild(badge);
+    // Small source label
+    if (usingFallback) {
+      const src = document.createElement('div');
+      src.style.cssText = 'font-size:9px;color:#aaa;margin-top:1px';
+      src.textContent = e._source;
+      tdCat.appendChild(src);
+    }
 
-    // Clinical term cell
+    // ── Clinical term ─────────────────────────────────────────────────────────
     const tdTerm = document.createElement('td');
     tdTerm.style.cssText = 'padding:7px 10px;font-weight:600;color:#222;vertical-align:middle';
     tdTerm.textContent = e.text || '—';
 
-    // SNOMED code cell
+    // ── Code (SNOMED / ICD) ───────────────────────────────────────────────────
     const tdCode = document.createElement('td');
     tdCode.style.cssText = 'padding:7px 10px;vertical-align:middle';
-    if (e.snomed_code) {
+    if (e.code) {
       const codeEl = document.createElement('code');
-      codeEl.style.cssText = 'background:#e8f0fe;color:#1a4fa0;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.3px;font-family:monospace';
-      codeEl.textContent = e.snomed_code;
+      const codeColor = e._source === 'Local' ? '#6a4e9e' : '#1a4fa0';
+      const codeBg    = e._source === 'Local' ? '#f0eafb' : '#e8f0fe';
+      codeEl.style.cssText = `background:${codeBg};color:${codeColor};padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.3px;font-family:monospace`;
+      codeEl.textContent = e.code;
       tdCode.appendChild(codeEl);
     } else {
       const noMap = document.createElement('span');
-      noMap.style.cssText = 'color:#999;font-size:11px;font-style:italic';
-      noMap.textContent = 'No map';
+      noMap.style.cssText = 'color:#bbb;font-size:11px;font-style:italic';
+      noMap.textContent = '—';
       tdCode.appendChild(noMap);
     }
 
-    // Description cell
+    // ── Description ───────────────────────────────────────────────────────────
     const tdDesc = document.createElement('td');
     tdDesc.style.cssText = 'padding:7px 10px;color:#555;font-size:11px;vertical-align:middle';
-    tdDesc.textContent = e.description || (e.snomed_code ? 'SNOMED CT concept' : 'Not mapped by Comprehend Medical');
+    tdDesc.textContent = e.desc || (e.code ? e._source + ' concept' : '—');
 
-    // Confidence cell
+    // ── Confidence ────────────────────────────────────────────────────────────
     const tdConf = document.createElement('td');
     tdConf.style.cssText = 'padding:7px 10px;text-align:center;vertical-align:middle';
-    if (e.confidence) {
-      const pct = Math.round(e.confidence * 100);
+    if (e.conf != null) {
+      const pct = Math.round(e.conf * 100);
       const confSpan = document.createElement('span');
-      const confColor = pct >= 70 ? '#1a6636' : pct >= 45 ? '#d67e00' : '#c0392b';
-      confSpan.style.cssText = `font-size:11px;font-weight:700;color:${confColor}`;
+      confSpan.style.cssText = `font-size:11px;font-weight:700;color:${pct >= 70 ? '#1a6636' : pct >= 45 ? '#d67e00' : '#c0392b'}`;
       confSpan.textContent = pct + '%';
       tdConf.appendChild(confSpan);
     } else {
-      tdConf.textContent = '—';
-      tdConf.style.color = '#aaa';
+      const dash = document.createElement('span');
+      dash.style.cssText = 'color:#ccc;font-size:11px';
+      dash.textContent = '—';
+      tdConf.appendChild(dash);
     }
 
     tr.appendChild(tdCat);
