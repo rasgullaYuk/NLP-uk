@@ -24,9 +24,20 @@ import boto3
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
 
+# ── Load .env file if present (so portal works without manually exporting vars) ─
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    with open(_env_file) as _ef:
+        for _line in _ef:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                # Only set if not already in environment (env vars take priority)
+                if _k.strip() not in os.environ:
+                    os.environ[_k.strip()] = _v.strip()
+
 # ── AWS clients ───────────────────────────────────────────────────────────────
-# Credentials are read from environment variables only — never hardcoded.
-# Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your environment or .env file.
+# Credentials are read from environment variables or .env file — never hardcoded.
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_KEY    = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -122,8 +133,8 @@ def _prepare_pages(file_path: Path, out_dir: Path) -> list:
     unavailable (e.g. cv2 not installed in this venv).
     """
     if _HAS_DOCUMENT_HANDLER:
-        # Returns list of original image paths ready for OpenCV preprocessing
-        paths = _prepare_document(str(file_path), output_dir=str(out_dir))
+        # prepare_document() returns (image_paths, failed_pages) tuple — unpack correctly
+        paths, _failed = _prepare_document(str(file_path), output_dir=str(out_dir))
         return [Path(p) for p in paths]
 
     # Fallback: PyMuPDF for PDFs, direct copy for images
@@ -256,8 +267,17 @@ Extracted clinical entities:
 - Diagnoses: {', '.join(diagnoses) or 'None identified'}"""
 
     def call_claude(prompt: str, max_tokens: int = 500) -> str:
-        # Tell Claude explicitly to avoid markdown so summaries render cleanly
-        clean_prompt = prompt + "\n\nIMPORTANT: Write in plain prose only. Do NOT use markdown formatting — no asterisks, no bold (**), no bullet dashes, no numbered lists with dots. Use plain sentences and line breaks only."
+        # Explicit no-markdown system instruction prepended to every prompt.
+        # Claude on Bedrock respects this reliably when placed at the start.
+        system_instruction = (
+            "You are a clinical documentation assistant. "
+            "STRICT RULE: Output plain text only. "
+            "Do NOT use any markdown formatting whatsoever: "
+            "no # headers, no ** bold, no * italic, no bullet dashes (-), "
+            "no numbered lists with dots, no horizontal rules (---). "
+            "Use plain sentences separated by line breaks only."
+        )
+        clean_prompt = system_instruction + "\n\n" + prompt
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": max_tokens,
@@ -265,10 +285,12 @@ Extracted clinical entities:
         })
         resp = client.invoke_model(modelId=MODEL, body=body, contentType="application/json")
         raw = json.loads(resp["body"].read())["content"][0]["text"].strip()
-        # Strip any residual markdown just in case
+        # Belt-and-suspenders: strip any residual markdown Claude ignored
         import re as _re
-        clean = _re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', raw)  # remove **bold** / *italic*
-        clean = _re.sub(r'^#{1,3}\s+', '', clean, flags=_re.MULTILINE)  # remove # headers
+        clean = _re.sub(r'\*{1,2}([^*\n]+)\*{1,2}', r'\1', raw)  # **bold** / *italic*
+        clean = _re.sub(r'^#{1,3}\s+', '', clean, flags=_re.MULTILINE)  # ## headers
+        clean = _re.sub(r'^[-–—]{3,}\s*$', '', clean, flags=_re.MULTILINE)  # --- dividers
+        clean = clean.strip()
         return clean
 
     # ── Type-specific clinician prompt ─────────────────────────────────────────
@@ -759,14 +781,23 @@ def extract_patient_info(text: str) -> dict:
             if m: info["gravida_parity"] = m.group(1).replace(" ", "")
 
         # ── EDD (Estimated Delivery Date) ─────────────────────────────────────
+        # Skip any parenthetical abbreviation e.g. "(EDD)" before the actual date
         if not info["edd"]:
-            m = re.search(r'(?i)(?:EDD|Estimate Delivery Date)[:\s]+([^\n]{3,20})', l)
-            if m: info["edd"] = m.group(1).strip()
+            m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})', l)
+            if not m:  # date may be on next line — try broader capture
+                m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+([^\n(]{3,20})', l)
+            if m:
+                val = m.group(1).strip().rstrip(')')
+                if val and not val.lower().startswith('('):
+                    info["edd"] = val
 
         # ── EGA (Estimated Gestational Age) ───────────────────────────────────
         if not info["gestational_age"]:
-            m = re.search(r'(?i)(?:EGA|Estimate Gestational Age|Gestational Age)[:\s]+([^\n]{3,20})', l)
-            if m: info["gestational_age"] = m.group(1).strip()
+            m = re.search(r'(?i)(?:EGA|Estimated?\s+Gestational\s+Age|Gestational\s+Age)(?:\s*\([^)]*\))?\s*[:\s]+(\d[^\n(]{2,20})', l)
+            if m:
+                val = m.group(1).strip().rstrip(')')
+                if val:
+                    info["gestational_age"] = val
 
         # ── Expert Health format: name/DOB in letter body "Re: MR/MISS Name" ─
         if not info["name"]:
@@ -955,10 +986,20 @@ def extract_clinical_specifics(text: str, letter_type: str) -> dict:
 
     # ── Antenatal Discharge Summary ───────────────────────────────────────────
     if "Antenatal" in letter_type:
-        m = re.search(r'(?i)(?:EDD|Estimate Delivery Date)[:\s]+([^\n]{3,20})', t)
-        if m: extras["edd"] = m.group(1).strip()
-        m = re.search(r'(?i)(?:EGA|Estimate Gestational Age)[:\s]+([^\n]{3,20})', t)
-        if m: extras["gestational_age"] = m.group(1).strip()
+        # EDD — skip any "(EDD)" parenthetical, capture the actual date value
+        m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})', t)
+        if not m:
+            m = re.search(r'(?i)(?:EDD|Estimated?\s+Delivery\s+Date)(?:\s*\([^)]*\))?\s*[:\s]+([^\n(]{3,20})', t)
+        if m:
+            val = m.group(1).strip().rstrip(')')
+            if val and not val.lower().startswith('('):
+                extras["edd"] = val
+        # EGA — skip "(EGA)" parenthetical, capture weeks+days e.g. "29+1 weeks"
+        m = re.search(r'(?i)(?:EGA|Estimated?\s+Gestational\s+Age)(?:\s*\([^)]*\))?\s*[:\s]+(\d[^\n(]{2,20})', t)
+        if m:
+            val = m.group(1).strip().rstrip(')')
+            if val:
+                extras["gestational_age"] = val
         m = re.search(r'(?i)Gravida\s*&?\s*Parity[:\s]+([^\n]{2,10})', t)
         if m: extras["gravida_parity"] = m.group(1).strip()
         m = re.search(r'(?i)reason for (?:visit|admission)[:\s]+([^\n]{5,150})', t)
@@ -1488,25 +1529,44 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
             </div>
           </div>
 
-          <!-- SNOMED section inline on Details tab -->
-          <div class="field-group" style="margin-top:12px">
-            <div class="field-label" style="display:flex;align-items:center;justify-content:space-between">
-              <span>SNOMED CT Entities</span>
-              <span id="snomed-conf-badge" style="font-size:11px;color:var(--muted);font-weight:400"></span>
+          <!-- SNOMED CT Mapping Card — prominent, dedicated slot below Summary -->
+          <div id="snomed-card" style="margin-top:14px;border:2px solid #005eb8;border-radius:10px;overflow:hidden">
+            <!-- Card header -->
+            <div style="background:#005eb8;padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:15px">🧬</span>
+                <span style="color:#fff;font-weight:700;font-size:13px;letter-spacing:.3px">SNOMED CT Mappings</span>
+                <span style="background:rgba(255,255,255,0.2);color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;font-weight:600" id="snomed-count-badge">0 entities</span>
+              </div>
+              <span id="snomed-conf-badge" style="color:rgba(255,255,255,0.85);font-size:11px;font-weight:500"></span>
             </div>
-            <div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:4px">
-              <div style="margin-bottom:6px">
-                <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🔴 Problems / Diagnoses</div>
-                <div id="detail-chips-problems" style="min-height:24px"></div>
-              </div>
-              <div style="margin-bottom:6px;border-top:1px solid var(--border);padding-top:6px">
-                <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">💊 Medications</div>
-                <div id="detail-chips-medications" style="min-height:24px"></div>
-              </div>
-              <div style="border-top:1px solid var(--border);padding-top:6px">
-                <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🩺 Confirmed Diagnoses</div>
-                <div id="detail-chips-diagnoses" style="min-height:24px"></div>
-              </div>
+            <!-- Legend row -->
+            <div style="background:#eaf1fb;padding:5px 12px;display:flex;gap:14px;font-size:11px;color:#444;border-bottom:1px solid #c8d8ea">
+              <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#c0392b;margin-right:4px;vertical-align:middle"></span>Problem/Finding</span>
+              <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1a6636;margin-right:4px;vertical-align:middle"></span>Diagnosis</span>
+              <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1a4fa0;margin-right:4px;vertical-align:middle"></span>Medication</span>
+            </div>
+            <!-- Table -->
+            <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+              <table id="snomed-table" style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead>
+                  <tr style="background:#f0f4fa;position:sticky;top:0;z-index:1">
+                    <th style="padding:6px 10px;text-align:left;font-weight:700;color:#333;border-bottom:1px solid #c8d8ea;width:90px">Category</th>
+                    <th style="padding:6px 10px;text-align:left;font-weight:700;color:#333;border-bottom:1px solid #c8d8ea">Clinical Term</th>
+                    <th style="padding:6px 10px;text-align:left;font-weight:700;color:#333;border-bottom:1px solid #c8d8ea;width:100px">SNOMED Code</th>
+                    <th style="padding:6px 10px;text-align:left;font-weight:700;color:#333;border-bottom:1px solid #c8d8ea">Description</th>
+                    <th style="padding:6px 10px;text-align:center;font-weight:700;color:#333;border-bottom:1px solid #c8d8ea;width:58px">Conf.</th>
+                  </tr>
+                </thead>
+                <tbody id="snomed-table-body">
+                  <tr><td colspan="5" style="padding:16px;text-align:center;color:#888;font-style:italic">Processing…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <!-- Empty state (shown when 0 entities returned) -->
+            <div id="snomed-empty" style="display:none;padding:14px 12px;text-align:center;color:#666;font-size:12px;background:#fafbfc">
+              No SNOMED CT entities identified — document may use non-standard terminology or OCR quality was low.
+              <span style="display:block;margin-top:4px;color:#999;font-size:11px">Check the Coding tab for raw ICD codes and medication extraction.</span>
             </div>
           </div>
 
@@ -1819,15 +1879,12 @@ function renderResult(data, file) {
   setText('di-type', data.letter_type || '—');
   setText('di-trust', data.hospital_trust || '—');   // OBS-008
   setText('di-date', new Date(data.processed_at).toLocaleString('en-GB'));
-  // OBS-004: Show per-type threshold used
-  const thresh = data.confidence_threshold || 0.85;
-  setText('di-conf', `${((data.unified_confidence||0)*100).toFixed(0)}% (threshold ${(thresh*100).toFixed(0)}%)`);
+  // OBS-004: Show per-type threshold used (reuse threshold already declared above)
+  setText('di-conf', `${((data.unified_confidence||0)*100).toFixed(0)}% (threshold ${(threshold*100).toFixed(0)}%)`);
   // OBS-007: Show sensitivity warning if detected
   if (data.is_sensitive) document.getElementById('di-sensitive-row').style.display = '';
 
-  // Confidence — use per-type threshold from backend, not hardcoded 0.85
-  const conf      = data.unified_confidence || 0;
-  const threshold = data.confidence_threshold || 0.85;
+  // Confidence bar — reuse conf/threshold already declared above
   document.getElementById('conf-score-label').textContent = (conf*100).toFixed(0) + '%';
   const bar = document.getElementById('conf-bar');
   bar.style.width = Math.min(conf*100, 100) + '%';
@@ -1854,21 +1911,26 @@ function renderResult(data, file) {
   renderRightEntities('right-medications',(data.snomed||{}).medications|| []);
   renderRightEntities('right-diagnoses',  (data.snomed||{}).diagnoses  || []);
 
-  // SNOMED chips — Details tab (visible without switching tabs)
+  // SNOMED CT mapping table — Details tab (prominent dedicated card)
   const snomedProbs = (data.snomed||{}).problems   || [];
   const snomedMeds  = (data.snomed||{}).medications|| [];
   const snomedDx    = (data.snomed||{}).diagnoses  || [];
-  // merge problems + diagnoses so users see all clinical terms in one place
-  renderChips('detail-chips-problems',    [...snomedProbs, ...snomedDx]);
-  renderChips('detail-chips-medications', snomedMeds);
-  renderChips('detail-chips-diagnoses',   snomedDx);
-  // show SNOMED confidence badge
-  const snomedConf = data.pipeline_stages && data.pipeline_stages.track_a
-    ? data.pipeline_stages.track_a.confidence : null;
+  const trackA      = (data.pipeline_stages||{}).track_a || {};
+  const trackAError = trackA.error || null;
+  // Fallbacks: locally extracted ICD codes and raw medications (always available, no AWS needed)
+  const icdFallback  = data.icd_codes        || [];
+  const medsFallback = data.medications_raw  || [];
+  renderSnomedTable(snomedProbs, snomedMeds, snomedDx, icdFallback, medsFallback, trackAError);
+  // Header confidence badge
+  const snomedConf = trackA.confidence != null ? trackA.confidence : null;
   const snomedBadge = document.getElementById('snomed-conf-badge');
-  if (snomedBadge && snomedConf !== null) {
-    const total = snomedProbs.length + snomedMeds.length + snomedDx.length;
-    snomedBadge.textContent = total + ' entities · conf ' + (snomedConf*100).toFixed(0) + '%';
+  if (snomedBadge) {
+    if (snomedConf !== null) {
+      snomedBadge.textContent = 'AWS Comprehend · conf ' + (snomedConf*100).toFixed(0) + '%';
+    } else if (trackAError) {
+      snomedBadge.textContent = 'Comprehend unavailable — showing local extraction';
+      snomedBadge.style.color = '#ffd97d';
+    }
   }
 
   // ICD chips
@@ -2000,17 +2062,29 @@ function renderResult(data, file) {
     specsSection.style.display = 'none';
   }
 
-  // Pipeline stages
+  // Pipeline stages — show status, confidence where available, error reason for partial/error
   const stages = data.pipeline_stages || {};
   document.getElementById('pipeline-stages-display').innerHTML =
-    Object.entries(stages).map(([k,v]) =>
-      `<div style="display:flex;justify-content:space-between;padding:2px 0">
-        <span>${k}</span>
-        <span style="color:${v.status==='done'?'var(--nhs-green)':v.status==='error'?'var(--nhs-red)':'var(--muted)'}">
-          ${v.status} ${v.confidence !== undefined ? '('+Math.round(v.confidence*100)+'%)' : ''}
-        </span>
-      </div>`
-    ).join('');
+    Object.entries(stages).map(([k,v]) => {
+      const isDone    = v.status === 'done';
+      const isPartial = v.status === 'partial';
+      const isError   = v.status === 'error';
+      const isSkipped = v.status === 'skipped';
+      const color = isDone ? 'var(--nhs-green)'
+                  : isPartial ? '#d67e00'
+                  : isError ? 'var(--nhs-red)'
+                  : 'var(--muted)';
+      const confTxt = v.confidence !== undefined ? ' (' + Math.round(v.confidence*100) + '%)' : '';
+      const errTxt  = (isPartial || isError) && v.error
+        ? `<div style="font-size:10px;color:#c0392b;margin-top:1px;word-break:break-word">${v.error}</div>`
+        : '';
+      return `<div style="padding:3px 0;border-bottom:1px solid #edf1f7">
+        <div style="display:flex;justify-content:space-between">
+          <span style="font-weight:600;font-size:12px">${k}</span>
+          <span style="color:${color};font-size:12px">${v.status}${confTxt}</span>
+        </div>${errTxt}
+      </div>`;
+    }).join('');
 
   // Download button
   document.getElementById('btn-download').onclick = () => {
@@ -2027,6 +2101,139 @@ function renderResult(data, file) {
   document.getElementById('btn-emis').onclick = () => {
     alert('Export to EMIS: In production this would push the structured JSON to the EMIS platform via the configured API endpoint.');
   };
+}
+
+// ── SNOMED CT Mapping Table ───────────────────────────────────────────────────
+// Always shows something:
+//  1. AWS Comprehend Medical SNOMED entities (preferred — problems/diagnoses/medications with codes)
+//  2. If Comprehend failed/empty: falls back to locally-extracted ICD codes + raw medications
+// Each row: category badge | clinical term | code | description | confidence
+function renderSnomedTable(problems, medications, diagnoses, icdFallback, medsFallback, comprehendError) {
+  const tbody      = document.getElementById('snomed-table-body');
+  const emptyMsg   = document.getElementById('snomed-empty');
+  const countBadge = document.getElementById('snomed-count-badge');
+  const cardHeader = document.querySelector('#snomed-card > div:first-child');
+  if (!tbody) return;
+
+  // Build rows from AWS Comprehend entities
+  let rows = [
+    ...problems.map(e   => ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Problem',    _color: '#c0392b', _bg: '#fdf2f2', _source: 'SNOMED CT' })),
+    ...diagnoses.map(e  => ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Diagnosis',  _color: '#1a6636', _bg: '#f2faf5', _source: 'SNOMED CT' })),
+    ...medications.map(e=> ({ text: e.text, code: e.snomed_code, desc: e.description, conf: e.confidence, _cat: 'Medication', _color: '#1a4fa0', _bg: '#f2f5fc', _source: 'SNOMED CT' })),
+  ];
+
+  // ── Fallback: local extraction when Comprehend returned nothing ─────────────
+  const usingFallback = rows.length === 0;
+  if (usingFallback) {
+    // ICD codes — locally extracted by regex, always available
+    (icdFallback || []).forEach(code => {
+      rows.push({ text: code, code: code, desc: 'ICD-10 code (locally extracted)', conf: null,
+                  _cat: 'ICD Code', _color: '#6a4e9e', _bg: '#f5f0fc', _source: 'Local' });
+    });
+    // Raw medications — locally extracted by dosage-pattern regex
+    (medsFallback || []).forEach(m => {
+      rows.push({ text: m.name, code: null, desc: m.dose || 'medication', conf: null,
+                  _cat: 'Medication', _color: '#1a4fa0', _bg: '#f2f5fc', _source: 'Local' });
+    });
+    // Update header to signal fallback mode
+    if (cardHeader && comprehendError) {
+      const note = cardHeader.querySelector('#snomed-fallback-note');
+      if (!note) {
+        const n = document.createElement('div');
+        n.id = 'snomed-fallback-note';
+        n.style.cssText = 'background:#d67e00;color:#fff;font-size:10px;padding:3px 12px;text-align:center';
+        n.textContent = '⚠ AWS Comprehend unavailable — showing locally extracted codes. Error: ' + comprehendError;
+        cardHeader.parentElement.insertBefore(n, cardHeader.nextSibling);
+      }
+    }
+  }
+
+  // Count badge
+  if (countBadge) {
+    const label = usingFallback ? ' local codes' : (rows.length === 1 ? ' entity' : ' entities');
+    countBadge.textContent = rows.length + label;
+    if (usingFallback) countBadge.style.background = 'rgba(214,126,0,0.6)';
+  }
+
+  tbody.textContent = '';  // safe clear
+
+  if (!rows.length) {
+    if (emptyMsg) { emptyMsg.style.display = ''; }
+    tbody.parentElement.style.display = 'none';
+    return;
+  }
+  if (emptyMsg) emptyMsg.style.display = 'none';
+  tbody.parentElement.style.display = '';
+
+  rows.forEach((e, idx) => {
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid #edf1f7;' + (idx % 2 === 0 ? 'background:#fff' : 'background:#fafbfc');
+
+    // ── Category badge ────────────────────────────────────────────────────────
+    const tdCat = document.createElement('td');
+    tdCat.style.cssText = 'padding:7px 10px;vertical-align:middle;white-space:nowrap';
+    const badge = document.createElement('span');
+    badge.style.cssText = `display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;color:${e._color};background:${e._bg};border:1px solid ${e._color}30`;
+    badge.textContent = e._cat;
+    tdCat.appendChild(badge);
+    // Small source label
+    if (usingFallback) {
+      const src = document.createElement('div');
+      src.style.cssText = 'font-size:9px;color:#aaa;margin-top:1px';
+      src.textContent = e._source;
+      tdCat.appendChild(src);
+    }
+
+    // ── Clinical term ─────────────────────────────────────────────────────────
+    const tdTerm = document.createElement('td');
+    tdTerm.style.cssText = 'padding:7px 10px;font-weight:600;color:#222;vertical-align:middle';
+    tdTerm.textContent = e.text || '—';
+
+    // ── Code (SNOMED / ICD) ───────────────────────────────────────────────────
+    const tdCode = document.createElement('td');
+    tdCode.style.cssText = 'padding:7px 10px;vertical-align:middle';
+    if (e.code) {
+      const codeEl = document.createElement('code');
+      const codeColor = e._source === 'Local' ? '#6a4e9e' : '#1a4fa0';
+      const codeBg    = e._source === 'Local' ? '#f0eafb' : '#e8f0fe';
+      codeEl.style.cssText = `background:${codeBg};color:${codeColor};padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.3px;font-family:monospace`;
+      codeEl.textContent = e.code;
+      tdCode.appendChild(codeEl);
+    } else {
+      const noMap = document.createElement('span');
+      noMap.style.cssText = 'color:#bbb;font-size:11px;font-style:italic';
+      noMap.textContent = '—';
+      tdCode.appendChild(noMap);
+    }
+
+    // ── Description ───────────────────────────────────────────────────────────
+    const tdDesc = document.createElement('td');
+    tdDesc.style.cssText = 'padding:7px 10px;color:#555;font-size:11px;vertical-align:middle';
+    tdDesc.textContent = e.desc || (e.code ? e._source + ' concept' : '—');
+
+    // ── Confidence ────────────────────────────────────────────────────────────
+    const tdConf = document.createElement('td');
+    tdConf.style.cssText = 'padding:7px 10px;text-align:center;vertical-align:middle';
+    if (e.conf != null) {
+      const pct = Math.round(e.conf * 100);
+      const confSpan = document.createElement('span');
+      confSpan.style.cssText = `font-size:11px;font-weight:700;color:${pct >= 70 ? '#1a6636' : pct >= 45 ? '#d67e00' : '#c0392b'}`;
+      confSpan.textContent = pct + '%';
+      tdConf.appendChild(confSpan);
+    } else {
+      const dash = document.createElement('span');
+      dash.style.cssText = 'color:#ccc;font-size:11px';
+      dash.textContent = '—';
+      tdConf.appendChild(dash);
+    }
+
+    tr.appendChild(tdCat);
+    tr.appendChild(tdTerm);
+    tr.appendChild(tdCode);
+    tr.appendChild(tdDesc);
+    tr.appendChild(tdConf);
+    tbody.appendChild(tr);
+  });
 }
 
 // FIX (review comment 7): Use safe DOM construction (textContent) instead of
@@ -2147,22 +2354,25 @@ function mdToHtml(text) {
     .replace(/>/g, '&gt;');
 
   let html = escaped
+    // ### and ## section headers → styled block (before bold so ** inside headers work)
+    .replace(/^#{3}\s+(.+)$/gm, '<strong style="display:block;margin:10px 0 3px;font-size:12px;color:#005eb8;text-transform:uppercase;letter-spacing:.4px">$1</strong>')
+    .replace(/^#{1,2}\s+(.+)$/gm, '<strong style="display:block;margin:10px 0 4px;font-size:13px;color:#003087">$1</strong>')
     // **bold** → <strong>
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     // *italic* → <em>
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
     // Numbered list items: "1. text" or "1) text"
-    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li>$1</li>')
+    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li style="margin:3px 0">$1</li>')
     // Bullet list items: "- text" or "* text"
-    .replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
-    // Wrap consecutive <li> blocks in <ol> / <ul>
-    .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul style="margin:6px 0 6px 16px;padding:0">' + m + '</ul>')
+    .replace(/^[\-\u2022]\s+(.+)$/gm, '<li style="margin:3px 0">$1</li>')
+    // Wrap consecutive <li> blocks in <ul>
+    .replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => '<ul style="margin:6px 0 6px 16px;padding:0;list-style:disc">' + m + '</ul>')
     // Double newline → paragraph break
-    .replace(/\n{2,}/g, '</p><p style="margin:6px 0">')
+    .replace(/\n{2,}/g, '</p><p style="margin:5px 0">')
     // Single newline → line break
     .replace(/\n/g, '<br>');
 
-  return '<p style="margin:0">' + html + '</p>';
+  return '<div style="line-height:1.55;font-size:13px">' + html + '</div>';
 }
 
 function setText(id, text) {
