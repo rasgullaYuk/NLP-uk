@@ -24,9 +24,20 @@ import boto3
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
 
+# ── Load .env file if present (so portal works without manually exporting vars) ─
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    with open(_env_file) as _ef:
+        for _line in _ef:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                # Only set if not already in environment (env vars take priority)
+                if _k.strip() not in os.environ:
+                    os.environ[_k.strip()] = _v.strip()
+
 # ── AWS clients ───────────────────────────────────────────────────────────────
-# Credentials are read from environment variables only — never hardcoded.
-# Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your environment or .env file.
+# Credentials are read from environment variables or .env file — never hardcoded.
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_KEY    = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -122,8 +133,8 @@ def _prepare_pages(file_path: Path, out_dir: Path) -> list:
     unavailable (e.g. cv2 not installed in this venv).
     """
     if _HAS_DOCUMENT_HANDLER:
-        # Returns list of original image paths ready for OpenCV preprocessing
-        paths = _prepare_document(str(file_path), output_dir=str(out_dir))
+        # prepare_document() returns (image_paths, failed_pages) tuple — unpack correctly
+        paths, _failed = _prepare_document(str(file_path), output_dir=str(out_dir))
         return [Path(p) for p in paths]
 
     # Fallback: PyMuPDF for PDFs, direct copy for images
@@ -1868,15 +1879,12 @@ function renderResult(data, file) {
   setText('di-type', data.letter_type || '—');
   setText('di-trust', data.hospital_trust || '—');   // OBS-008
   setText('di-date', new Date(data.processed_at).toLocaleString('en-GB'));
-  // OBS-004: Show per-type threshold used
-  const thresh = data.confidence_threshold || 0.85;
-  setText('di-conf', `${((data.unified_confidence||0)*100).toFixed(0)}% (threshold ${(thresh*100).toFixed(0)}%)`);
+  // OBS-004: Show per-type threshold used (reuse threshold already declared above)
+  setText('di-conf', `${((data.unified_confidence||0)*100).toFixed(0)}% (threshold ${(threshold*100).toFixed(0)}%)`);
   // OBS-007: Show sensitivity warning if detected
   if (data.is_sensitive) document.getElementById('di-sensitive-row').style.display = '';
 
-  // Confidence — use per-type threshold from backend, not hardcoded 0.85
-  const conf      = data.unified_confidence || 0;
-  const threshold = data.confidence_threshold || 0.85;
+  // Confidence bar — reuse conf/threshold already declared above
   document.getElementById('conf-score-label').textContent = (conf*100).toFixed(0) + '%';
   const bar = document.getElementById('conf-bar');
   bar.style.width = Math.min(conf*100, 100) + '%';
