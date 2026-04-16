@@ -197,62 +197,128 @@ def run_textract(image_path: Path) -> dict:
     return {"text": "\n".join(lines), "confidence": avg_conf, "blocks": blocks}
 
 
+import re as _re
+
+# Clinical keyword patterns for regex-based extraction (used when Comprehend finds nothing).
+# Covers common NHS letter terminology across maternity, cardiology, respiratory, etc.
+_CLINICAL_KEYWORD_PATTERNS = [
+    # Maternity / antenatal
+    r'\b(antenatal|postnatal|prenatal|antepartum|postpartum)\b',
+    r'\b(pregnancy|pregnant|gravida|para|gestation|gestational)\b',
+    r'\b(labour|labor|delivery|caesarean|c-section|episiotomy|forceps)\b',
+    r'\b(miscarriage|stillbirth|ectopic|placenta|preeclampsia|pre-eclampsia)\b',
+    r'\b(fetal|foetal|neonatal|newborn|infant|neonate)\b',
+    r'\b(midwife|midwifery|obstetric|obstetrician|gynaecology|gynecology)\b',
+    # Common conditions
+    r'\b(hypertension|hypotension|diabetes|asthma|epilepsy|anaemia|anemia)\b',
+    r'\b(infection|sepsis|pneumonia|bronchitis|urinary tract infection|UTI)\b',
+    r'\b(fracture|laceration|contusion|haematoma|hematoma|haemorrhage|hemorrhage)\b',
+    r'\b(tachycardia|bradycardia|arrhythmia|atrial fibrillation|SVT|DVT|PE)\b',
+    r'\b(depression|anxiety|psychosis|dementia|delirium|schizophrenia)\b',
+    # Procedures / investigations
+    r'\b(blood pressure|BP|ECG|X-ray|MRI|CT scan|ultrasound|USS|echo)\b',
+    r'\b(surgery|operation|procedure|biopsy|endoscopy|colonoscopy)\b',
+    r'\b(blood test|urine test|swab|culture|haemoglobin|hemoglobin|HbA1c)\b',
+    # Medications
+    r'\b(aspirin|paracetamol|ibuprofen|metformin|atenolol|amlodipine|ramipril)\b',
+    r'\b(amoxicillin|penicillin|fluoxetine|sertraline|citalopram|warfarin|heparin)\b',
+    r'\b(insulin|salbutamol|omeprazole|lansoprazole|methotrexate|prednisolone)\b',
+    # Discharge / assessment terms
+    r'\b(discharge|admission|referral|follow.?up|review|assessment)\b',
+    r'\b(pain|swelling|bleeding|fever|temperature|fatigue|nausea|vomiting)\b',
+]
+
+def _extract_keywords_from_text(text: str) -> list:
+    """Extract candidate clinical terms from text using regex patterns.
+    Returns list of unique matched terms (lowercased, deduplicated)."""
+    found = {}
+    text_lower = text.lower()
+    for pattern in _CLINICAL_KEYWORD_PATTERNS:
+        for m in _re.finditer(pattern, text_lower, _re.IGNORECASE):
+            term = m.group(0).strip()
+            if term and len(term) >= 4 and term not in found:
+                found[term] = term
+    return list(found.values())
+
+
+def _snomed_lookup_term(term: str, client, base_conf: float = 0.6) -> dict | None:
+    """Call infer_snomedct on a single clinical term. Returns entry dict or None."""
+    try:
+        sr = client.infer_snomedct(Text=term)
+        sr_entities = sr.get("Entities", [])
+        if not sr_entities:
+            return None
+        se = sr_entities[0]
+        concepts = se.get("SNOMEDCTConcepts", [])
+        if not concepts:
+            return None
+        code = concepts[0].get("Code", "")
+        if not code:
+            return None
+        conf = round(base_conf * se.get("Score", 0.5), 3)
+        cat  = se.get("Category", "MEDICAL_CONDITION")
+        return {
+            "text":        term,
+            "category":    cat,
+            "snomed_code": code,
+            "description": concepts[0].get("Description", ""),
+            "confidence":  conf,
+            "entity_id":   str(uuid.uuid4())[:8],
+            "source":      "term_extraction",
+        }
+    except Exception:
+        return None
+
+
 def _snomed_term_fallback(text: str, client) -> list:
     """SRS §3.2 semantic fallback: when InferSNOMEDCT returns 0 entities on the full
-    document text, use detect_entities_v2 to extract individual medical terms, then
-    call infer_snomedct on each term in isolation for a targeted SNOMED lookup.
+    document text, extract individual clinical terms via two methods and map each to SNOMED.
     Returns the top-3 highest-confidence matches.
+
+    Method A: detect_entities_v2 (low threshold 0.15 — catches sparse clinical docs)
+    Method B: regex keyword extraction (catches domain terms Comprehend misses)
+    Both feed into per-term infer_snomedct calls.
     """
-    # Step 1 — broad medical entity detection
+    results, seen_codes = [], set()
+
+    # ── Method A: detect_entities_v2 with lowered threshold ────────────────────
     try:
         resp = client.detect_entities_v2(Text=text[:10000])
-        raw = resp.get("Entities", [])
+        raw  = resp.get("Entities", [])
     except Exception:
         raw = []
 
     CLINICAL_TYPES = {
         "DX_NAME", "MEDICAL_CONDITION", "PROCEDURE", "TEST_NAME",
         "GENERIC_NAME", "BRAND_NAME", "MEDICATION", "TREATMENT_NAME",
-        "SYSTEM_ORGAN_SITE", "SIGN", "SYMPTOM",
+        "SYSTEM_ORGAN_SITE", "SIGN", "SYMPTOM", "DIRECTION",
     }
-    candidates = sorted(
-        [e for e in raw if e.get("Type") in CLINICAL_TYPES and e.get("Score", 0) > 0.40],
+    method_a = sorted(
+        [e for e in raw if e.get("Type") in CLINICAL_TYPES and e.get("Score", 0) > 0.15],
         key=lambda x: x.get("Score", 0), reverse=True
-    )[:10]  # try top-10, keep best 3
+    )[:10]
 
-    # Step 2 — per-term SNOMED lookup
-    results, seen_codes = [], set()
-    for entity in candidates:
+    for entity in method_a:
         term = entity.get("Text", "").strip()
-        if not term or len(term) < 3:
+        if not term or len(term) < 3 or term.lower() in seen_codes:
             continue
-        try:
-            sr = client.infer_snomedct(Text=term)
-            sr_entities = sr.get("Entities", [])
-            if not sr_entities:
+        entry = _snomed_lookup_term(term, client, base_conf=entity.get("Score", 0.5))
+        if entry and entry["snomed_code"] not in seen_codes:
+            seen_codes.add(entry["snomed_code"])
+            results.append(entry)
+
+    # ── Method B: regex keyword extraction (fills gap when Method A finds nothing) ──
+    if len(results) < 3:
+        keywords = _extract_keywords_from_text(text)
+        for kw in keywords:
+            if len(results) >= 8:   # collect up to 8, trim to 3 at end
+                break
+            if kw in seen_codes:
                 continue
-            se = sr_entities[0]
-            concepts = se.get("SNOMEDCTConcepts", [])
-            if not concepts:
-                continue
-            code = concepts[0].get("Code", "")
-            if not code or code in seen_codes:
-                continue
-            seen_codes.add(code)
-            # Combined confidence: entity detection × SNOMED concept match
-            conf = round(entity.get("Score", 0) * se.get("Score", 0.5), 3)
-            cat  = entity.get("Category", "MEDICAL_CONDITION").upper()
-            results.append({
-                "text":        term,
-                "category":    entity.get("Category", "MEDICAL_CONDITION"),
-                "snomed_code": code,
-                "description": concepts[0].get("Description", ""),
-                "confidence":  conf,
-                "entity_id":   str(uuid.uuid4())[:8],
-                "source":      "term_extraction",
-            })
-        except Exception:
-            continue
+            entry = _snomed_lookup_term(kw, client, base_conf=0.60)
+            if entry and entry["snomed_code"] not in seen_codes:
+                seen_codes.add(entry["snomed_code"])
+                results.append(entry)
 
     results.sort(key=lambda x: x["confidence"], reverse=True)
     return results[:3]
