@@ -32,9 +32,12 @@ if _env_file.exists():
             _line = _line.strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _, _v = _line.partition("=")
-                # Only set if not already in environment (env vars take priority)
-                if _k.strip() not in os.environ:
-                    os.environ[_k.strip()] = _v.strip()
+                _key = _k.strip()
+                _val = _v.strip().strip('"').strip("'")
+                # Use .env value when variable is missing OR present-but-empty.
+                _current = os.environ.get(_key)
+                if _current is None or not str(_current).strip():
+                    os.environ[_key] = _val
 
 # ── AWS clients ───────────────────────────────────────────────────────────────
 # Credentials are read from environment variables or .env file — never hardcoded.
@@ -228,6 +231,13 @@ _CLINICAL_KEYWORD_PATTERNS = [
     r'\b(pain|swelling|bleeding|fever|temperature|fatigue|nausea|vomiting)\b',
 ]
 
+# Non-diagnostic / generic words that should never become SNOMED condition codes.
+_SNOMED_NON_CONDITION_TERMS = {
+    "treatment", "advice", "consultation", "review", "assessment", "follow-up",
+    "follow up", "referral", "service", "doctor", "patient", "outcome", "question",
+    "answer", "date", "prescribed", "prescription", "medication", "history",
+}
+
 def _extract_keywords_from_text(text: str) -> list:
     """Extract candidate clinical terms from text using regex patterns.
     Returns list of unique matched terms (lowercased, deduplicated)."""
@@ -239,6 +249,33 @@ def _extract_keywords_from_text(text: str) -> list:
             if term and len(term) >= 4 and term not in found:
                 found[term] = term
     return list(found.values())
+
+
+def _is_condition_like_entity(entity: dict, top_desc: str = "") -> bool:
+    """Accept only diagnosis/condition-style entities; reject procedures/generic text."""
+    cat = (entity.get("Category", "") or "").upper()
+    etype = (entity.get("Type", "") or "").upper()
+    traits = {(t.get("Name", "") or "").upper() for t in entity.get("Traits", [])}
+    txt = (entity.get("Text", "") or "").strip().lower()
+    desc = (top_desc or "").strip().lower()
+
+    if not txt or txt in _SNOMED_NON_CONDITION_TERMS:
+        return False
+
+    # Reject broad administrative/procedural concepts even if SNOMED returns a code.
+    if any(x in cat for x in ("PROCEDURE", "TREATMENT", "MEDICATION", "ANATOMY", "TEST")):
+        return False
+    if any(x in desc for x in ("procedure", "encounter", "consultation", "treatment")):
+        return False
+
+    # Keep condition/diagnosis/symptom signals only.
+    if "MEDICAL_CONDITION" in cat or "DIAGNOSIS" in cat:
+        return True
+    if etype in {"DX_NAME", "DIAGNOSIS"}:
+        return True
+    if "DIAGNOSIS" in traits or "SYMPTOM" in traits or "SIGN" in traits:
+        return True
+    return False
 
 
 def _snomed_lookup_term(term: str, client, base_conf: float = 0.6) -> dict | None:
@@ -254,6 +291,8 @@ def _snomed_lookup_term(term: str, client, base_conf: float = 0.6) -> dict | Non
             return None
         code = concepts[0].get("Code", "")
         if not code:
+            return None
+        if not _is_condition_like_entity(se, concepts[0].get("Description", "")):
             return None
         conf = round(base_conf * se.get("Score", 0.5), 3)
         cat  = se.get("Category", "MEDICAL_CONDITION")
@@ -288,11 +327,7 @@ def _snomed_term_fallback(text: str, client) -> list:
     except Exception:
         raw = []
 
-    CLINICAL_TYPES = {
-        "DX_NAME", "MEDICAL_CONDITION", "PROCEDURE", "TEST_NAME",
-        "GENERIC_NAME", "BRAND_NAME", "MEDICATION", "TREATMENT_NAME",
-        "SYSTEM_ORGAN_SITE", "SIGN", "SYMPTOM", "DIRECTION",
-    }
+    CLINICAL_TYPES = {"DX_NAME", "MEDICAL_CONDITION", "SIGN", "SYMPTOM"}
     method_a = sorted(
         [e for e in raw if e.get("Type") in CLINICAL_TYPES and e.get("Score", 0) > 0.15],
         key=lambda x: x.get("Score", 0), reverse=True
@@ -300,7 +335,12 @@ def _snomed_term_fallback(text: str, client) -> list:
 
     for entity in method_a:
         term = entity.get("Text", "").strip()
-        if not term or len(term) < 3 or term.lower() in seen_codes:
+        if (
+            not term
+            or len(term) < 3
+            or term.lower() in seen_codes
+            or term.lower() in _SNOMED_NON_CONDITION_TERMS
+        ):
             continue
         entry = _snomed_lookup_term(term, client, base_conf=entity.get("Score", 0.5))
         if entry and entry["snomed_code"] not in seen_codes:
@@ -405,6 +445,10 @@ def run_comprehend_medical(text: str) -> dict:
     for e in entities:
         concepts = e.get("SNOMEDCTConcepts", [])
         top = concepts[0] if concepts else {}
+        if not top.get("Code"):
+            continue
+        if not _is_condition_like_entity(e, top.get("Description", "")):
+            continue
         entry = {
             "text":        e.get("Text", ""),
             "category":    e.get("Category", ""),
@@ -414,14 +458,9 @@ def run_comprehend_medical(text: str) -> dict:
             "entity_id":   str(uuid.uuid4())[:8],
             "source":      "comprehend_medical",
         }
-        cat = e.get("Category", "").upper()
-        if "MEDICATION" in cat or "DRUG" in cat:
-            medications.append(entry)
-        elif "DIAGNOSIS" in cat or "CONDITION" in cat or "FINDING" in cat or "ANATOMY" in cat:
-            if any(t.get("Name") == "DIAGNOSIS" for t in e.get("Traits", [])):
-                diagnoses.append(entry)
-            else:
-                problems.append(entry)
+        # Keep output focused on diagnosis/condition semantics only.
+        if any((t.get("Name", "") or "").upper() == "DIAGNOSIS" for t in e.get("Traits", [])):
+            diagnoses.append(entry)
         else:
             problems.append(entry)
 
@@ -433,9 +472,7 @@ def run_comprehend_medical(text: str) -> dict:
         used_fallback = bool(top3_fallback)
         for entry in top3_fallback:
             cat = entry.get("category", "").upper()
-            if "MEDICATION" in cat or "DRUG" in cat or "GENERIC" in cat or "BRAND" in cat:
-                medications.append(entry)
-            elif "DIAGNOSIS" in cat or "CONDITION" in cat:
+            if "DIAGNOSIS" in cat or "CONDITION" in cat:
                 diagnoses.append(entry)
             else:
                 problems.append(entry)
@@ -459,7 +496,51 @@ def run_comprehend_medical(text: str) -> dict:
     }
 
 
-def run_bedrock_summarization(text: str, snomed_data: dict, letter_type: str = "") -> dict:
+def _rewrite_summary_without_age(summary_text: str, patient_sex: str = "") -> str:
+    """Remove demographics/identifiers from summary and keep concise clinical content."""
+    import re as _re
+    txt = (summary_text or "").strip()
+    if not txt:
+        return txt
+
+    # Remove common age mentions.
+    txt = _re.sub(r'\b\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\b', '', txt, flags=_re.IGNORECASE)
+    txt = _re.sub(r'\bage\s*(?:of)?\s*\d{1,3}\b', '', txt, flags=_re.IGNORECASE)
+    txt = _re.sub(r'\baged\s*\d{1,3}\b', '', txt, flags=_re.IGNORECASE)
+    txt = _re.sub(r'\b\d{1,3}\s*(?:yo|y/o)\b', '', txt, flags=_re.IGNORECASE)
+    txt = _re.sub(r'\b\d{1,3}\s*[mMfF]\b', '', txt)  # e.g. 29M / 52F
+    txt = _re.sub(r'\(\s*\d{1,3}\s*\)', '', txt)
+
+    # Remove direct identifiers and demographic labels from generated summary text.
+    txt = _re.sub(r'(?i)\bNHS\s*(?:No|Number|#)?[:\s]*\d[\d\s]{8,14}\d\b', '', txt)
+    txt = _re.sub(r'(?i)\b(?:DOB|D\.?\s*O\.?\s*B\.?|Date\s*of\s*birth)\b[:\s-]*[^\.,;\n]*', '', txt)
+    txt = _re.sub(r'(?i)\b(?:Patient\s*Name|Name|Address|Hospital\s*Number|MRN)\b[:\s-]*[^\.,;\n]*', '', txt)
+    txt = _re.sub(r'(?i)\b(?:Mr|Mrs|Ms|Miss|Dr)\.?\s+[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+){0,2}\b', 'patient', txt)
+    txt = _re.sub(r'(?i)\bsex[:\s-]*(?:male|female|m|f)\b', '', txt)
+
+    txt = _re.sub(r'\s{2,}', ' ', txt).strip(" ,.-")
+
+    sex = (patient_sex or "").strip().lower()
+    if sex in ("m", "male"):
+        label = "male patient"
+    elif sex in ("f", "female"):
+        label = "female patient"
+    else:
+        label = "patient"
+
+    # Ensure first phrase is a single demographic subject, never duplicated.
+    txt = _re.sub(r'(?i)^(the\s+)?(male|female)\s+patient\b', r'\2 patient', txt).strip()
+    if txt and not _re.match(r'(?i)^(male|female)\s+patient\b', txt):
+        txt = _re.sub(r'(?i)^(the\s+)?patient\b', label, txt, count=1)
+        if not _re.match(r'(?i)^(male|female)\s+patient\b', txt):
+            txt = f"{label.capitalize()} {txt[0].lower() + txt[1:]}" if txt else label.capitalize()
+    # Collapse accidental double subjects if model returned one and we prepended one.
+    txt = _re.sub(r'(?i)^(male|female)\s+patient\s+(?:the\s+)?\1\s+patient\b', r'\1 patient', txt).strip()
+
+    return txt.strip()
+
+
+def run_bedrock_summarization(text: str, snomed_data: dict, letter_type: str = "", patient_sex: str = "") -> dict:
     """Generate role-based summaries via Claude on Bedrock, tailored per document type."""
     client = make_client("bedrock-runtime")
     MODEL  = "anthropic.claude-3-haiku-20240307-v1:0"
@@ -526,9 +607,16 @@ Extracted clinical entities:
         return clean
 
     # ── Type-specific clinician prompt ─────────────────────────────────────────
+    demo_guard = (
+        " Use 'male patient' or 'female patient' where relevant. "
+        "Do NOT mention exact age or year-old wording. "
+        "Do NOT include patient identifiers: name, DOB/date of birth, NHS number, address, or hospital number."
+    )
+
     if "111" in letter_type:
         clin_prompt = (f"{context}\n\nThis is a 111 First ED triage report. Write a clinical handover summary (3-4 sentences) "
-                       "covering: presenting complaint, differential diagnosis, acuity, treatment given, and disposition/referral decision.")
+                       "covering: presenting complaint, differential diagnosis, acuity, treatment given, and disposition/referral decision."
+                       + demo_guard)
     elif "Cancer" in letter_type:
         clin_prompt = (f"{context}\n\nThis is a cancer surveillance clinic letter. Summarise: cancer type and staging, "
                        "previous treatment, current surveillance findings, next steps and surveillance schedule. Be oncology-precise.")
@@ -584,9 +672,10 @@ Extracted clinical entities:
                        "Include: admission reason, diagnosis, procedures performed, discharge condition. Be brief.")
     else:
         clin_prompt = (f"{context}\n\nWrite a CONCISE clinical summary (2-3 sentences ONLY, maximum 50 words). "
-                       "Include: main diagnosis/condition, key finding or intervention, current status. NO detailed explanations.")
+                       "Include: main diagnosis/condition, key finding or intervention, current status. NO detailed explanations."
+                       + demo_guard)
 
-    clinician_summary = call_claude(clin_prompt)
+    clinician_summary = _rewrite_summary_without_age(call_claude(clin_prompt), patient_sex)
 
     # OBS-007: Add sensitivity clause when safeguarding/bereavement markers detected.
     # Prevents re-traumatising patients by paraphrasing rather than quoting verbatim.
@@ -596,11 +685,12 @@ Extracted clinical entities:
         "Focus only on what the patient needs to do next."
     ) if is_sensitive else ""
 
-    patient_summary = call_claude(
+    patient_summary = _rewrite_summary_without_age(call_claude(
         f"{context}\n\nWrite a clear patient-friendly explanation (3-4 sentences) of what was found and what happens next. "
         "Avoid medical jargon. Use plain English. Start with the most important thing the patient needs to know."
         + sensitivity_clause
-    )
+        + demo_guard
+    ), patient_sex)
 
     pharmacist_summary = call_claude(
         f"{context}\n\nWrite a pharmacist-focused clinical summary. Include: all medications mentioned (with doses/frequencies), "
@@ -676,7 +766,7 @@ def extract_hospital_trust(text: str) -> str:
         return "Kettering General Hospital NHS Foundation Trust"
     if any(x in t for x in ["evolutio", "odtc.co.uk", "newtown house, newtown road"]):
         return "Evolutio Care Innovations Ltd"
-    if any(x in t for x in ["expert health", "expertHealth", "dr. mitra dutt"]):
+    if any(x in t for x in ["expert health", "expert/health", "experthealth", "expert health ltd", "dr. mitra dutt"]):
         return "Expert Health Ltd"
     return "Unknown Trust"
 
@@ -945,11 +1035,23 @@ def extract_patient_info(text: str) -> dict:
         # ── Name ──────────────────────────────────────────────────────────────
         if not info["name"]:
             # Standard: "Re: SURNAME, Forename"
-            m = re.search(r'(?i)(?:RE:|RE patient:|Patient(?:\s+Name)?:|Patient Surname.*?:)\s*(?:Mr\.?|Mrs\.?|Ms\.?|Miss\.?|Dr\.?)?\s*([A-Z][A-Za-z,\s\-]{2,50})', l)
+            m = re.search(r'(?i)(?:RE:|RE patient:|Patient(?:\s+Name)?:|Patient Surname.*?:|Name:)\s*(?:(Mr|Mrs|Ms|Miss)\.?\s+)?(?:Dr\.?\s+)?([A-Z][A-Za-z,\s\-]{2,50})', l)
             if m:
-                info["name"] = re.sub(r'\s+', ' ', m.group(1).strip().rstrip(','))
+                title = (m.group(1) or "").lower()
+                info["name"] = re.sub(r'\s+', ' ', m.group(2).strip().rstrip(','))
+                if not info["sex"]:
+                    if title == "mr":
+                        info["sex"] = "Male"
+                    elif title in ("mrs", "ms", "miss"):
+                        info["sex"] = "Female"
             # 111 format: standalone "SURNAME, Forename" on its own line after DOB line
-            elif re.match(r'^[A-Z]{2,}[,\s]+[A-Z][a-z]', l) and not any(x in ll for x in ['nhs', 'hospital', 'road', 'street', 'lane', 'avenue', 'drive']):
+            # Guard rails: avoid header/identifier lines like "MRN Number: 5653424".
+            elif (
+                re.match(r'^[A-Z]{2,}[,\s]+[A-Z][a-z]', l)
+                and ":" not in l
+                and not re.search(r'\d', l)
+                and not any(x in ll for x in ['nhs', 'hospital', 'road', 'street', 'lane', 'avenue', 'drive', 'mrn', 'number', 'pas', 'id'])
+            ):
                 if len(l.split()) <= 4:
                     info["name"] = l
 
@@ -968,26 +1070,39 @@ def extract_patient_info(text: str) -> dict:
         # ── DOB ───────────────────────────────────────────────────────────────
         if not info["dob"]:
             # Standard: "DOB: 16/3/1975" or "Date of birth: 17.06.1987"
-            m = re.search(r'(?i)(?:DOB|Date of birth)[:\s]+(\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})', l)
+            m = re.search(r'(?i)(?:D\.?\s*O\.?\s*B\.?|DOB|Date of birth)[:\s]+(\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})', l)
             if m:
                 info["dob"] = m.group(1).strip()
             else:
                 # 111 format: "Born 22-Feb-1996" or "Born: 22-Feb-1996"
                 m = re.search(r'(?i)\bBorn[:\s]+(\d{1,2}[\-\/]\w+[\-\/]\d{4}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})', l)
                 if m: info["dob"] = m.group(1).strip()
+                elif re.search(r'(?i)^(?:D\.?\s*O\.?\s*B\.?|DOB|Date of birth)[:\s]*$', l) and i + 1 < len(lines):
+                    nxt = lines[i + 1].strip()
+                    if re.search(r'\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{4}', nxt):
+                        info["dob"] = nxt
 
         # ── Sex / Gender ──────────────────────────────────────────────────────
         if not info["sex"]:
             m = re.search(r'(?i)(?:Gender|Sex|Legal Sex)[:\s,]+(Male|Female|M\b|F\b)', l)
             if m:
                 g = m.group(1).upper()
-                info["sex"] = "M" if g.startswith("M") else "F"
+                info["sex"] = "Male" if g.startswith("M") else "Female"
             elif re.search(r'\bGender:\s*Female\b|\bfemale\b', l, re.IGNORECASE): info["sex"] = "F"
             elif re.search(r'\bGender:\s*Male\b',   l, re.IGNORECASE):            info["sex"] = "M"
+            else:
+                # OCR-tolerant fallback: "Ma'e", "Femal", "Fema1e", etc.
+                mg = re.search(r'(?i)(?:Gender|Sex|Legal Sex)\s*[:\s,]+([A-Za-z\'`]{1,12})', l)
+                if mg:
+                    token = re.sub(r'[^A-Za-z]', '', mg.group(1)).lower()
+                    if token.startswith('m'):
+                        info["sex"] = "Male"
+                    elif token.startswith('f'):
+                        info["sex"] = "Female"
 
         # ── Hospital / MRN / PAS ──────────────────────────────────────────────
         if not info["hospital_number"]:
-            m = re.search(r'(?i)(?:MRN|Hospital\s*(?:No|Number)|PAS\s*ID|MRN:)[:\s]+([A-Z0-9]+)', l)
+            m = re.search(r'(?i)(?:MRN(?:\s*(?:No|Number))?|Hospital\s*(?:No|Number)|PAS\s*ID)\s*[:#]?\s*([A-Z0-9]{4,})', l)
             if m: info["hospital_number"] = m.group(1).strip()
 
         # ── GP Practice ───────────────────────────────────────────────────────
@@ -1037,7 +1152,129 @@ def extract_patient_info(text: str) -> dict:
                 # Next few lines have address, DOB may be 3rd line pattern
                 info["name"] = raw
 
+    # Second pass: handle forms where labels and values are on separate lines.
+    if lines:
+        for i, line in enumerate(lines[:-1]):
+            l = line.strip()
+            nxt = lines[i + 1].strip()
+            if not nxt:
+                continue
+            if not info["name"] and re.search(r'(?i)^(?:Patient\s*Name|Name)\s*$', l):
+                if not re.search(r'(?i)\b(nhs|number|date|birth|sex|gender)\b', nxt):
+                    info["name"] = nxt
+            if not info["nhs_number"] and re.search(r'(?i)^NHS\s*Number\s*$', l):
+                if re.search(r'^\d[\d\s]{8,14}\d$', nxt):
+                    info["nhs_number"] = nxt
+            if not info["dob"] and re.search(r'(?i)^Date\s*of\s*Birth\s*$', l):
+                if re.search(r'\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{4}', nxt):
+                    info["dob"] = nxt
+            if not info["sex"] and re.search(r'(?i)^Sex$|^Gender$', l):
+                if re.search(r'(?i)^M(ale)?$', nxt):
+                    info["sex"] = "Male"
+                elif re.search(r'(?i)^F(emale)?$', nxt):
+                    info["sex"] = "Female"
+
+    # Third pass: global OCR-variant fallback for DOB and title-based sex.
+    if not info["dob"]:
+        m = re.search(r'(?is)(?:D\W*O\W*B|DOB|Date\W*of\W*Birth)\W*[:\-]?\W*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})', text)
+        if m:
+            info["dob"] = m.group(1).strip()
+    if not info["sex"]:
+        if re.search(r'(?i)\bMr\.?\s+[A-Z][a-z]+', text):
+            info["sex"] = "Male"
+        elif re.search(r'(?i)\b(?:Mrs|Ms|Miss)\.?\s+[A-Z][a-z]+', text):
+            info["sex"] = "Female"
+
+    # Fourth pass: infer DOB from standalone date immediately after patient name block
+    # (common in private prescriber letters where DOB is on its own line).
+    if not info["dob"] or info["dob"] == "Not available":
+        for i, line in enumerate(lines):
+            l = line.strip()
+            if re.search(r'(?i)\b(?:Re|Patient(?:\s+Name)?)\s*[:\-]', l):
+                window = lines[i + 1:i + 8]
+                for cand in window:
+                    c = cand.strip()
+                    if re.search(r'^\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{4}$', c):
+                        # Skip obvious letter/prescription dates; prefer patient-block standalone date.
+                        if not re.search(r'(?i)(date|prescribed|referral)', (lines[i-1] if i > 0 else "") + " " + c):
+                            info["dob"] = c
+                            break
+                if info["dob"] and info["dob"] != "Not available":
+                    break
+
+    # Normalise any remaining short sex codes.
+    if info["sex"] == "M":
+        info["sex"] = "Male"
+    elif info["sex"] == "F":
+        info["sex"] = "Female"
+
+    # Final sanitiser: reject identifier text accidentally captured as name.
+    if info["name"] and re.search(r'(?i)\b(mrn|nhs|number|hospital|pas\s*id)\b', info["name"]):
+        info["name"] = ""
+    if not info["name"]:
+        m = re.search(r'(?im)^\s*Name\s*:\s*([A-Za-z][A-Za-z\'\-\s]{1,60})\s*$', text)
+        if m:
+            info["name"] = re.sub(r'\s+', ' ', m.group(1).strip())
+
+    # Ensure patient info panel never appears empty.
+    if not info["name"]:
+        info["name"] = "Not available"
+    if not info["nhs_number"]:
+        info["nhs_number"] = "Not available"
+    if not info["dob"]:
+        info["dob"] = "Not available"
+    if not info["sex"]:
+        info["sex"] = "Not available"
+
     return info
+
+
+def infer_patient_sex_from_context(text: str, summaries: dict | None = None) -> str:
+    """Infer sex only when clear directional signals exist; else return empty string."""
+    import re
+    src = (text or "")
+    lower = src.lower()
+
+    # Highest confidence signals from source text.
+    if re.search(r'(?i)\b(?:gender|sex|legal sex)\s*[:\s,]+m(?:ale)?\b', src):
+        return "Male"
+    if re.search(r'(?i)\b(?:gender|sex|legal sex)\s*[:\s,]+f(?:emale)?\b', src):
+        return "Female"
+
+    male_hits = 0
+    female_hits = 0
+
+    male_hits += len(re.findall(r'(?i)\b(?:mr)\.?\s+[A-Z][a-z]+\b', src))
+    female_hits += len(re.findall(r'(?i)\b(?:mrs|ms|miss)\.?\s+[A-Z][a-z]+\b', src))
+
+    # Pronoun cues from document text.
+    male_hits += len(re.findall(r'(?i)\b(?:he|his|him)\b', src))
+    female_hits += len(re.findall(r'(?i)\b(?:she|her|hers)\b', src))
+
+    if male_hits > 0 and female_hits == 0:
+        return "Male"
+    if female_hits > 0 and male_hits == 0:
+        return "Female"
+
+    # Last resort: use generated summaries only if they are unambiguous.
+    s = ""
+    if summaries:
+        s = " ".join(
+            [
+                (summaries.get("clinician", {}) or {}).get("summary", ""),
+                (summaries.get("patient", {}) or {}).get("summary", ""),
+                (summaries.get("pharmacist", {}) or {}).get("summary", ""),
+            ]
+        ).lower()
+    if s:
+        s_male = len(re.findall(r'\b(?:male patient| he | his | him )\b', f" {s} "))
+        s_female = len(re.findall(r'\b(?:female patient| she | her | hers )\b', f" {s} "))
+        if s_male > 0 and s_female == 0:
+            return "Male"
+        if s_female > 0 and s_male == 0:
+            return "Female"
+
+    return ""
 
 
 def extract_clinical_specifics(text: str, letter_type: str) -> dict:
@@ -1457,13 +1694,16 @@ def run_full_pipeline(doc_id: str, upload_path: Path) -> dict:
     # Enrich with local ICD + medication extraction (works without AWS)
     icd_codes   = extract_icd_codes(doc_text)
     medications = extract_medications(doc_text)
+    # Extract demographics before summary generation so prompts can prefer
+    # sex-based wording ("male/female patient") instead of age.
+    patient_info = extract_patient_info(doc_text)
 
     # ── Document type classification (needed before Track B for type-specific prompts) ──
     letter_type   = infer_letter_type(doc_text)
 
     # ── Track B: Summarization ─────────────────────────────────────────────────
     try:
-        summaries = run_bedrock_summarization(doc_text, snomed, letter_type)
+        summaries = run_bedrock_summarization(doc_text, snomed, letter_type, patient_info.get("sex", ""))
         result["pipeline_stages"]["track_b"] = {
             "status": "done",
             "confidence": round(summaries["llm_confidence"], 3),
@@ -1475,9 +1715,16 @@ def run_full_pipeline(doc_id: str, upload_path: Path) -> dict:
         result["error"]  = f"Summarization failed: {e}"
         return result
 
-    # ── SNOMED top-up: guarantee codes for every document ─────────────────────
-    # Runs AFTER Track B so the clinician summary is available as a high-quality
-    # SNOMED source. Ensures every document has at least 3 codes.
+    # Fill missing sex from clear context cues so Patient Info does not stay blank
+    # on letters that omit an explicit Gender/Sex field.
+    if (patient_info.get("sex") or "").strip().lower() in ("", "not available"):
+        inferred_sex = infer_patient_sex_from_context(doc_text, summaries)
+        if inferred_sex:
+            patient_info["sex"] = inferred_sex
+
+    # ── SNOMED top-up: diagnosis-focused only (no generic doctype seeding) ───
+    # Runs AFTER Track B so clinician summary can still recover missed condition
+    # concepts, but we do not inject hardcoded document-type procedure codes.
     _has_snomed = bool(snomed.get("problems") or snomed.get("medications") or snomed.get("diagnoses"))
 
     if not _has_snomed:
@@ -1500,15 +1747,11 @@ def run_full_pipeline(doc_id: str, upload_path: Path) -> dict:
                 pass
 
     if not _has_snomed:
-        # Layer 2: Document-type hardcoded SNOMED codes — absolute guarantee.
-        # Every document type has 3 pre-validated SNOMED CT codes in the lookup table.
-        _dtype_codes = _get_doctype_snomed_codes(letter_type)
-        snomed["problems"]          = _dtype_codes
+        snomed["problems"]          = []
         snomed["medications"]       = []
         snomed["diagnoses"]         = []
-        snomed["snomed_confidence"] = 0.72
-        snomed["used_doctype_fallback"] = True
-        result["pipeline_stages"]["track_a"]["note"] = f"SNOMED codes from document-type table ({letter_type})"
+        snomed["used_doctype_fallback"] = False
+        result["pipeline_stages"]["track_a"]["note"] = "No diagnosis-focused SNOMED concepts detected from document text"
 
     # ── Confidence aggregation ─────────────────────────────────────────────────
     unified    = compute_unified_confidence(textract_conf, snomed["snomed_confidence"], summaries["llm_confidence"], letter_type)
@@ -1522,7 +1765,6 @@ def run_full_pipeline(doc_id: str, upload_path: Path) -> dict:
     hospital_trust = extract_hospital_trust(doc_text)
 
     # ── Structured field extraction ────────────────────────────────────────────
-    patient_info    = extract_patient_info(doc_text)
     struct_fields   = extract_structured_fields(doc_text)
     clinical_extras = extract_clinical_specifics(doc_text, letter_type)
 
@@ -1689,9 +1931,13 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
 .sheet-row{width:100%;text-align:left;padding:8px 12px;margin:2px 0;border:none;background:transparent;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px;display:flex;align-items:center;gap:10px}
 .sheet-row:hover{background:#f1f5f9}
 .snomed-table-details{margin-top:10px}
-.snomed-table-details > summary{font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;padding:6px 0;list-style:none}
-.snomed-table-details > summary::-webkit-details-marker{display:none}
-.snomed-table-details[open] > summary{color:var(--nhs-blue)}
+.snomed-table-disclosure{font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;padding:6px 0;background:none;border:none;text-align:left;width:100%;font:inherit;display:flex;align-items:center;gap:6px}
+.snomed-table-disclosure:hover{color:var(--nhs-blue)}
+.snomed-table-details.open .snomed-table-disclosure{color:var(--nhs-blue)}
+.snomed-table-details-body{display:none;margin-top:0}
+.snomed-table-details.open .snomed-table-details-body{display:block}
+.snomed-disclosure-chev{font-size:10px;color:var(--muted)}
+.snomed-table-details.open .snomed-disclosure-chev{color:var(--nhs-blue)}
 
 /* Summary box */
 .summary-box{background:#f0f7ff;border-left:3px solid var(--nhs-blue);border-radius:4px;padding:12px;margin-bottom:16px;font-size:13px;line-height:1.6;color:var(--text);position:relative}
@@ -1872,8 +2118,8 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
       <div class="tabs">
         <div class="tab active" onclick="showTab(this,'details')">Details</div>
         <div class="tab" onclick="showTab(this,'coding')">Coding</div>
-        <div class="tab" onclick="showTab(this,'tasks')">Tasks</div>
-        <div class="tab" onclick="showTab(this,'actions')">Actions</div>
+        <div class="tab" onclick="showTab(this,'tasks')">Follow-up</div>
+        <div class="tab" onclick="showTab(this,'actions')">GP Actions</div>
       </div>
       <div class="tab-content">
 
@@ -1887,16 +2133,11 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
           </div>
 
           <div class="field-group">
-            <div class="field-label">Clinician summary</div>
-            <div class="summary-box" id="summary-clinician">
-              <button class="copy-btn" onclick="copyText('summary-clinician')" title="Copy">📋</button>
+            <div class="field-label">Summary</div>
+            <div class="summary-box" id="summary-main">
+              <button class="copy-btn" onclick="copyText('summary-main')" title="Copy">📋</button>
               Loading...
             </div>
-          </div>
-
-          <div class="field-group">
-            <div class="field-label">Pharmacist summary</div>
-            <div class="summary-box" id="summary-pharmacist">Loading...</div>
           </div>
 
           <div class="field-group">
@@ -1974,8 +2215,12 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
           <div class="pseudo-select" style="margin-bottom:10px">Add a code</div>
           <div id="coding-entity-cards"></div>
 
-          <details class="snomed-table-details">
-            <summary>Full SNOMED CT mapping table</summary>
+          <div class="snomed-table-details">
+            <button type="button" class="snomed-table-disclosure" onclick="toggleSnomedDetails(this)" aria-expanded="false">
+              <span class="snomed-disclosure-chev">▸</span>
+              <span>Full SNOMED CT mapping table</span>
+            </button>
+            <div class="snomed-table-details-body">
             <div id="snomed-card" style="margin-top:10px;border:2px solid #005eb8;border-radius:10px;overflow:hidden">
               <div style="background:#005eb8;padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
                 <div style="display:flex;align-items:center;gap:8px">
@@ -2011,7 +2256,8 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
                 <span style="display:block;margin-top:4px;color:#999;font-size:11px">See ICD codes and extracted medications below.</span>
               </div>
             </div>
-          </details>
+            </div>
+          </div>
 
           <div class="entity-section" style="margin-top:14px">
             <div class="entity-section-label">📋 ICD codes (local extraction)</div>
@@ -2037,12 +2283,8 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
           </div>
         </div>
 
-        <!-- TASKS TAB — patient instructions + suggested follow-up / GP items -->
+        <!-- FOLLOW-UP TAB — suggested follow-up tasks -->
         <div class="tab-pane" id="tab-tasks">
-          <div class="field-group">
-            <div class="field-label">Patient instructions</div>
-            <div class="summary-box" id="summary-patient">Loading...</div>
-          </div>
           <div class="task-block">
             <div class="task-block-h">
               <span>To-do</span>
@@ -2060,8 +2302,12 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
           </div>
         </div>
 
-        <!-- ACTIONS TAB — contact + document shortcuts (Anima-style) -->
+        <!-- GP ACTIONS TAB — extracted GP actions + contact / document shortcuts -->
         <div class="tab-pane" id="tab-actions">
+          <div class="field-group" style="margin-bottom:14px">
+            <div class="field-label">GP actions from letter</div>
+            <div id="gp-actions-list"></div>
+          </div>
           <div class="sheet-section">
             <button type="button" class="sheet-section-head" onclick="toggleSheetSection(this)">
               Contact <span>▾</span>
@@ -2114,6 +2360,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh}
         <div class="info-row"><div class="info-label">Name</div><div class="info-value" id="di-name" style="word-break:break-all">—</div></div>
         <div class="info-row"><div class="info-label">Letter Type</div><div class="info-value" id="di-type">—</div></div>
         <div class="info-row"><div class="info-label">Originating Trust</div><div class="info-value" id="di-trust" style="font-size:11px">—</div></div>
+        <div class="info-row"><div class="info-label">Associated Organisation</div><div class="info-value" id="di-assoc" style="font-size:11px">—</div></div>
         <div class="info-row"><div class="info-label">Status</div><div id="di-status"><span class="badge badge-processed">Processed</span></div></div>
         <div class="info-row"><div class="info-label">Confidence</div><div class="info-value" id="di-conf">—</div></div>
         <div class="info-row"><div class="info-label">Created Date</div><div class="info-value" id="di-date">—</div></div>
@@ -2273,7 +2520,6 @@ function renderResult(data, file) {
   }
 
   document.getElementById('doc-filename').textContent = data.filename || file.name;
-
   // Status badge — confidence is a QUALITY INDICATOR, not a gate.
   // Summaries and actions are ALWAYS generated (project letter D3/D5/D7).
   // The badge communicates trust level to the clinician for their review.
@@ -2306,9 +2552,8 @@ function renderResult(data, file) {
 
   // Summaries
   const sums = data.summaries || {};
-  setText('summary-clinician', (sums.clinician||{}).summary || 'Not available');
-  setText('summary-patient',   (sums.patient||{}).summary   || 'Not available');
-  setText('summary-pharmacist',(sums.pharmacist||{}).summary || 'Not available');
+  // Single concise clinical summary (clinician role — short form from pipeline prompts)
+  setText('summary-main', (sums.clinician||{}).summary || 'Not available');
 
   // Fields — the pipeline (infer_letter_type) predicts the raw letter type; the UI
   // maps that prediction onto one of the 10 practice-facing buckets. The dropdown
@@ -2325,10 +2570,10 @@ function renderResult(data, file) {
 
   // Patient info
   const pt = data.patient_info || {};
-  setText('pt-name', pt.name || '—'); setText('pd-name', pt.name || '—');
-  setText('pt-nhs',  pt.nhs_number || '—'); setText('pd-nhs', pt.nhs_number || '—');
-  setText('pt-dob',  pt.dob || '—'); setText('pd-dob', pt.dob || '—');
-  setText('pt-sex',  pt.sex || '—'); setText('pd-sex', pt.sex || '—');
+  setText('pt-name', pt.name || 'Not available'); setText('pd-name', pt.name || 'Not available');
+  setText('pt-nhs',  pt.nhs_number || 'Not available'); setText('pd-nhs', pt.nhs_number || 'Not available');
+  setText('pt-dob',  pt.dob || 'Not available'); setText('pd-dob', pt.dob || 'Not available');
+  setText('pt-sex',  pt.sex || 'Not available'); setText('pd-sex', pt.sex || 'Not available');
   // Obstetric fields (antenatal / gynae only)
   if (pt.gravida_parity) { setText('pt-gp', pt.gravida_parity); document.getElementById('pt-gp-row').style.display=''; }
   if (pt.edd)            { setText('pt-edd', pt.edd);           document.getElementById('pt-edd-row').style.display=''; }
@@ -2338,6 +2583,12 @@ function renderResult(data, file) {
   setText('di-name', data.filename || file.name);
   setText('di-type', bucketLabel || data.letter_type || '—');
   setText('di-trust', data.hospital_trust || '—');   // OBS-008
+  const assocOrg = (data.clinical_specifics || {}).provider
+    || (data.clinical_specifics || {}).referred_by
+    || (data.structured || {}).hospital
+    || data.hospital_trust
+    || '';
+  setText('di-assoc', assocOrg || 'Not available');
   setText('di-date', new Date(data.processed_at).toLocaleString('en-GB'));
   // OBS-004: Show per-type threshold used (reuse threshold already declared above)
   setText('di-conf', `${((data.unified_confidence||0)*100).toFixed(0)}% (threshold ${(threshold*100).toFixed(0)}%)`);
@@ -2430,8 +2681,9 @@ function renderResult(data, file) {
     document.getElementById('doc-filename').textContent += ` (${data.pages_processed} pages)`;
   }
 
-  // Tasks tab — suggested follow-up + GP actions as cards
-  renderTaskSuggestions(data.follow_up_actions || '', data.gp_actions || '');
+  // Follow-up tab — suggested follow-up tasks only (GP actions live under GP Actions tab)
+  renderTaskSuggestions(data.follow_up_actions || '');
+  renderGpActions(data.gp_actions || '');
 
   // Clinical Specifics (type-specific extras: TNM, CD4, OGTT, urgency, etc.)
   const specs = data.clinical_specifics || {};
@@ -2625,10 +2877,10 @@ function renderSnomedTable(problems, medications, diagnoses, icdFallback, medsFa
     rows = rows.map(r => ({ ...r, _source: 'term_extraction' }));
 
   } else if (usedSummaryFallback) {
-    // Layer 2 fallback: clinician summary used as SNOMED source
-    bannerText  = '📋 SNOMED codes mapped from AI-generated clinician summary';
+    // Layer 2 fallback: SNOMED inferred from supplementary structured narrative (not shown here as prose)
+    bannerText  = '📋 SNOMED codes mapped via supplementary clinical narrative extraction';
     bannerColor = '#1a6636';
-    badgeLabel  = rows.length + ' codes (summary)';
+    badgeLabel  = rows.length + ' codes (narrative fallback)';
     badgeColor  = '#1a6636';
     rows = rows.map(r => ({ ...r, _source: 'summary_fallback' }));
 
@@ -2703,7 +2955,7 @@ function renderSnomedTable(problems, medications, diagnoses, icdFallback, medsFa
       const srcLabels = {
         'term_extraction':   { label: '🔍 Term Extraction', color: '#1a4fa0' },
         'Term Extraction':   { label: '🔍 Term Extraction', color: '#1a4fa0' },
-        'summary_fallback':  { label: '📋 From Summary',    color: '#1a6636' },
+        'summary_fallback':  { label: '📋 Narrative fallback', color: '#1a6636' },
         'document_type':     { label: '📂 Doc-type Ref',    color: '#005EB8' },
         'Local':             { label: 'Local Extract',       color: '#888'    },
       };
@@ -2824,25 +3076,24 @@ function parseActionLines(text) {
   return String(text).split('\n').map(l => l.replace(/^\d+[\.\)]\s*/, '').trim()).filter(Boolean);
 }
 
-function renderTaskSuggestions(followText, gpText) {
+function renderTaskSuggestions(followText) {
   const el = document.getElementById('tasks-suggested');
   if (!el) return;
   el.textContent = '';
   const fu = parseActionLines(followText);
-  const gp = parseActionLines(gpText);
-  if (!fu.length && !gp.length) {
+  if (!fu.length) {
     const none = document.createElement('span');
     none.className = 'muted-empty';
-    none.textContent = 'No suggested tasks were generated for this document.';
+    none.textContent = 'No suggested follow-up tasks were generated for this document.';
     el.appendChild(none);
     return;
   }
-  function addCard(kind, bodyText) {
+  fu.forEach(bodyText => {
     const card = document.createElement('div');
-    card.className = 'task-suggest-card' + (kind === 'gp' ? ' gp' : '');
+    card.className = 'task-suggest-card';
     const badge = document.createElement('div');
     badge.className = 'badge-row';
-    badge.textContent = kind === 'gp' ? 'GP action required' : 'Follow-up / care task';
+    badge.textContent = 'Follow-up / care task';
     const p = document.createElement('p');
     p.textContent = bodyText;
     const row = document.createElement('div');
@@ -2857,9 +3108,42 @@ function renderTaskSuggestions(followText, gpText) {
     card.appendChild(p);
     card.appendChild(row);
     el.appendChild(card);
+  });
+}
+
+function renderGpActions(gpText) {
+  const el = document.getElementById('gp-actions-list');
+  if (!el) return;
+  el.textContent = '';
+  const gp = parseActionLines(gpText);
+  if (!gp.length) {
+    const none = document.createElement('span');
+    none.className = 'muted-empty';
+    none.textContent = 'No GP actions were extracted for this document.';
+    el.appendChild(none);
+    return;
   }
-  fu.forEach(t => addCard('fu', t));
-  gp.forEach(t => addCard('gp', t));
+  gp.forEach(bodyText => {
+    const card = document.createElement('div');
+    card.className = 'task-suggest-card gp';
+    const badge = document.createElement('div');
+    badge.className = 'badge-row';
+    badge.textContent = 'GP action required';
+    const p = document.createElement('p');
+    p.textContent = bodyText;
+    const row = document.createElement('div');
+    row.className = 'add-row';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-add-mini';
+    btn.textContent = 'Add';
+    btn.onclick = () => alert('In production this would add the GP action to the record workflow.');
+    row.appendChild(btn);
+    card.appendChild(badge);
+    card.appendChild(p);
+    card.appendChild(row);
+    el.appendChild(card);
+  });
 }
 
 // Parse the SNOMED semantic type from the description suffix, e.g.
@@ -3181,6 +3465,16 @@ function showTab(el, name) {
   document.getElementById('tab-'+name).classList.add('active');
 }
 
+function toggleSnomedDetails(btn) {
+  const wrap = btn.closest('.snomed-table-details');
+  if (!wrap) return;
+  const open = !wrap.classList.contains('open');
+  wrap.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const chev = btn.querySelector('.snomed-disclosure-chev');
+  if (chev) chev.textContent = open ? '▾' : '▸';
+}
+
 function toggleExpand(el) {
   const body = el.nextElementSibling;
   const chevron = el.querySelector('.chevron');
@@ -3318,5 +3612,6 @@ def get_result(doc_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"Starting Clinical Document Portal on http://0.0.0.0:{port}")
+    print(f"Starting Clinical Document Portal — open http://127.0.0.1:{port}/ in your browser")
+    print(f"(binding all interfaces: http://0.0.0.0:{port})")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
